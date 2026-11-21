@@ -18,6 +18,8 @@ const FLOOR_ONLY = /(_door|torch|fence_gate)$/
 // Clicking these opens a screen instead of placing a block against them.
 const INTERACTIVE = /(door|gate|chest|crafting_table|furnace|barrel|bed|anvil|lever|button|shulker|hopper)/
 const REPLACEABLE = new Set(['air', 'cave_air', 'short_grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush', 'snow'])
+// Liquids cannot be dug, but a placed block replaces them.
+const LIQUIDS = new Set(['water', 'lava'])
 
 function key (p) {
   return `${p.x},${p.y},${p.z}`
@@ -124,7 +126,7 @@ async function ensureMaterials (bot, cells, { movements, signal }) {
 async function clearCell (bot, cell, reserved, options) {
   const block = bot.blockAt(cell.position)
   if (!block || isEmpty(block)) return true
-  if (block.diggable === false) return false
+  if (block.diggable === false || LIQUIDS.has(block.name)) return false
   if (!await moveIntoReach(bot, cell.position, reserved, options)) return false
   await bot.tool.equipForBlock(block, { requireHarvest: false })
   await settle(bot.dig(block, true), { signal: options.signal, timeoutMs: 30000 })
@@ -158,7 +160,8 @@ async function buildBlueprint (bot, blueprint, origin, { movements, signal }) {
     throwIfAborted(signal)
     if (isDone(bot, cell)) continue
     const block = bot.blockAt(cell.position)
-    const needsClear = cell.block === 'air' || cell.auto || !REPLACEABLE.has(block?.name)
+    const placeable = REPLACEABLE.has(block?.name) || LIQUIDS.has(block?.name)
+    const needsClear = cell.block === 'air' || cell.auto || !placeable
     if (!needsClear || isEmpty(block)) continue
     try {
       await clearCell(bot, cell, reserved, options)

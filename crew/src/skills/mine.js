@@ -76,7 +76,8 @@ function touchesHazard (bot, position) {
 }
 
 function isSafeToDig (bot, block) {
-  return Boolean(block) && block.diggable !== false && !touchesHazard(bot, block.position)
+  if (!block || block.diggable === false || HAZARDS.has(block.name)) return false
+  return !touchesHazard(bot, block.position)
 }
 
 function isDark (block) {

@@ -187,4 +187,4 @@ async function craftItem (bot, name, count = 1, { movements, signal } = {}) {
   return plan.steps
 }
 
-module.exports = { planCraft, readRecipe, craftItem, ensureTable, findTable, MissingItemsError }
+module.exports = { planCraft, readRecipe, matchesStep, craftItem, ensureTable, findTable, MissingItemsError }
