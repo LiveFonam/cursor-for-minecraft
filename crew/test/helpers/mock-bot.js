@@ -278,6 +278,67 @@ function createMockBot ({
   }
   bot.collectBlock = new MockCollector()
 
+  // Dropping an item: a player within 3.5 blocks picks it up (the server's playerCollect).
+  bot.calls.tossed = []
+  bot.toss = async (type, _meta, count) => {
+    const name = registry.items[type].name
+    take(name, count)
+    bot.calls.tossed.push({ name, count, at: bot.entity.position.clone() })
+    const near = Object.values(bot.players).map(p => p.entity).find(e => e && e.position.distanceTo(bot.entity.position) <= 3.5)
+    if (near) setTimeout(() => bot.emit('playerCollect', near, { name: 'item' }), 5)
+  }
+  bot.lookAt = async () => {}
+  bot.setControlState = () => {}
+  bot.waitForTicks = async () => {}
+
+  // Furnaces smelt at once: each fuel item burns its vanilla number of items.
+  const smelts = { raw_iron: 'iron_ingot', raw_gold: 'gold_ingot', raw_copper: 'copper_ingot' }
+  const burnOf = name => ({ coal: 8, charcoal: 8, coal_block: 80, stick: 0.5 })[name] ?? (/_planks$|_log$/.test(name) ? 1.5 : 0)
+  bot.furnaces = new Map()
+  bot.openFurnace = async block => {
+    if (nameAt(block.position) !== 'furnace') throw new Error('Mock block is not a furnace')
+    const state = bot.furnaces.get(key(block.position)) ?? { input: null, fuel: null, output: null, burn: 0 }
+    bot.furnaces.set(key(block.position), state)
+    const run = () => {
+      while (state.input) {
+        if (state.burn < 1 && state.fuel) {
+          state.burn += burnOf(state.fuel.name)
+          if (--state.fuel.count === 0) state.fuel = null
+        }
+        if (state.burn < 1) break
+        state.burn -= 1
+        const out = smelts[state.input.name]
+        if (--state.input.count === 0) state.input = null
+        state.output = state.output ?? makeItem(out, 0)
+        state.output.count++
+      }
+    }
+    const put = (slot, type, count) => {
+      const name = registry.items[type].name
+      take(name, count)
+      state[slot] = state[slot] ?? makeItem(name, 0)
+      state[slot].count += count
+      run()
+    }
+    const takeSlot = slot => {
+      const item = state[slot]
+      state[slot] = null
+      if (item) give(item.name, item.count)
+      return item
+    }
+    return {
+      inputItem: () => state.input,
+      fuelItem: () => state.fuel,
+      outputItem: () => state.output,
+      putInput: async (type, _meta, count) => put('input', type, count),
+      putFuel: async (type, _meta, count) => put('fuel', type, count),
+      takeInput: async () => takeSlot('input'),
+      takeFuel: async () => takeSlot('fuel'),
+      takeOutput: async () => takeSlot('output'),
+      close: () => {}
+    }
+  }
+
   bot.chat = line => bot.calls.chat.push(line)
   bot.addEntity = entity => {
     const id = Object.keys(bot.entities).length + 100

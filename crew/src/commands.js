@@ -4,6 +4,7 @@ const jobs = require('./jobs')
 const { resolveMineTarget } = require('./skills/mine')
 const { loadBlueprint, listBlueprints } = require('./skills/blueprint')
 const { findNamedTarget } = require('./combat/targets')
+const { resolveTarget, label, withArticle } = require('./skills/crafter-plan')
 
 const HELP = 'Commands: come, follow, mine <block> [n], gather <block> [n], craft <item> [n], build <name>, farm, guard, fight <name>, status, stop'
 const MAX_COUNT = 256
@@ -57,6 +58,14 @@ function startCollect (ctx, verb, args, makeJob) {
 function startCraft (ctx, args) {
   const [rawName, rawCount] = args
   if (!rawName) return ctx.say('Usage: craft <item> [count]')
+  // "craft me a stone pickaxe": the crafter makes one and hands it over
+  const target = resolveTarget(args)
+  if (target) {
+    const current = ctx.state.job?.crafter
+    if (current && current.item === target) return ctx.say(`I am already on your ${label(target)}.`)
+    setJob(ctx, jobs.crafterJob(ctx, target))
+    return ctx.say(`Crafting ${withArticle(target)} for ${ctx.config.owner}.`)
+  }
   const name = rawName.toLowerCase().replace(/^minecraft:/, '')
   const count = parseCount(rawCount, 1)
   if (count === null) return ctx.say(`Count must be from 1 to ${MAX_COUNT}.`)
