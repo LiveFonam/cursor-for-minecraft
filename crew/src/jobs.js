@@ -8,6 +8,8 @@ const { craftItem } = require('./skills/craft')
 const { buildBlueprint } = require('./skills/build')
 const { farmWheat } = require('./skills/farm')
 const { countItem } = require('./skills/inventory')
+const { runCrafter, newCraftState } = require('./skills/crafter')
+const { label } = require('./skills/crafter-plan')
 
 // A job is { name, run(signal) }. Its run can be called again after a fight
 // or a survival break, so each job keeps its progress outside run.
@@ -104,6 +106,18 @@ function craftJob (ctx, itemName, count) {
   }
 }
 
+// One of the crafter's items for the owner: it gathers or waits for what is
+// missing, crafts it once and hands it over. The state lives outside run, so a
+// fight or a meal in between never makes a second one.
+function crafterJob (ctx, item) {
+  const state = newCraftState(item, ctx.config.owner)
+  return {
+    name: `craft ${label(item)}`,
+    crafter: state,
+    run: signal => runCrafter(ctx, state, signal)
+  }
+}
+
 function buildJob (ctx, blueprint, origin) {
   return {
     name: `build ${blueprint.name}`,
@@ -123,4 +137,4 @@ function farmJob (ctx, anchor) {
   }
 }
 
-module.exports = { ownerEntity, comeJob, followJob, guardJob, mineJob, gatherJob, craftJob, buildJob, farmJob }
+module.exports = { ownerEntity, comeJob, followJob, guardJob, mineJob, gatherJob, craftJob, crafterJob, buildJob, farmJob }

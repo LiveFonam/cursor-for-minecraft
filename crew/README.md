@@ -55,6 +55,7 @@ Start a line with `@crew` to talk to every bot, or with `@BotName` to talk to on
 | `mine <block> [n]` | Mines ore or blocks, digging tunnels and placing torches |
 | `gather <block> [n]` | Collects blocks it can walk to, without digging a path |
 | `craft <item> [n]` | Crafts an item and everything it needs along the way |
+| `craft me a <tool>` | The crafter: makes one and hands it to you (see below) |
 | `build <name>` | Builds a blueprint next to you |
 | `farm` | Harvests and replants wheat around you |
 | `guard` | Holds this spot and attacks hostile mobs nearby |
@@ -64,6 +65,20 @@ Start a line with `@crew` to talk to every bot, or with `@BotName` to talk to on
 | `help` | Lists the commands |
 
 `mine` and `gather` default to 8 items. Counts go up to 256.
+
+## Crafter
+
+`@crew craft me a stone pickaxe` asks the crafter for one item, handed to you. It knows the wooden, stone, iron and diamond pickaxe, the furnace and the crafting table, and common names like wood pickaxe, cobblestone pickaxe and workbench. Any other item still goes to the plain `craft <item> [n]`.
+
+1. It plans from what it really holds, using what it has first: logs become planks and sticks. It uses a crafting table in reach, or crafts and places one, and the wood for it is counted.
+2. For an iron pickaxe it uses the ingots it holds first. With raw iron it crafts a furnace if none is near, smelts only the ingots it lacks with coal or spare wood, and checks the ingots are in the bag before crafting.
+3. If something is missing it says exactly what, for example "I need 1 cobblestone". It gathers logs or mines the stone, ore or coal itself, which needs a pickaxe for stone. Whatever it still lacks, it asks you for. Drop it by the bot and the job carries on without a second command.
+4. A fight or a meal can cut in. The job keeps its progress and picks up again after, and it never makes a second copy, not even on a repeat request.
+5. It walks up and drops the item at your feet, and counts it given only when the server says you picked it up. If you are out of reach it keeps the item, says it is ready, and brings it when you come close.
+
+It crafts the way a player does: one item per cell, then a shift click on the result. On a real server, Mineflayer's own `bot.craft` sometimes left a log stuck in the crafting grid and made nothing.
+
+To try it on a server from `scripts/setup-server.sh` (a flat world, with RCON on), run `node scripts/crafter-live.js`. It plays the demo and all six items through chat.
 
 ## How it works
 
