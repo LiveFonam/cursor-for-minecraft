@@ -94,7 +94,7 @@ def build_obs(sim: Sim, seat: int, max_ticks: int = 600, rows: np.ndarray | None
 
     forward_v, right_v = _ego(vel[:, 0], vel[:, 2], sin_y, cos_y)
     own_charge = charge[at, me]
-    ready = own_charge >= C.FULL_CHARGE_THRESHOLD
+    ready = own_charge >= sim.cfg.ready_gate
     obs[:, 0] = sim.hp[at, me] / C.MAX_HEALTH
     obs[:, 1] = np.clip(forward_v * 3.0, -3.0, 3.0)
     obs[:, 2] = np.clip(right_v * 3.0, -3.0, 3.0)
@@ -367,6 +367,9 @@ def build_masks(
     if allowed_weapons is not None:
         held = held & allowed_weapons[at]
     mask[:, off[A.WEAPON] + A.WEAPON_ACTION] = held
+    if allowed_weapons is not None:
+        may_keep = allowed_weapons[at][np.arange(count), weapon]
+        mask[:, off[A.WEAPON] + A.WEAPON_KEEP] = may_keep | ~held.any(axis=1)
     mask[:, off[A.LOCK_AIM] + 1] = ~melee
 
     known = sim.perception.known_position(seat, at)

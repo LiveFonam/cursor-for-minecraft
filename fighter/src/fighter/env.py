@@ -41,6 +41,8 @@ class RewardConfig:
     spacing: float = 0.5
     strafe: float = 0.002
     best_range: float = 2.7
+    exact_miss: bool = False
+    followup_unfaded: bool = False
 
 
 class ArenaVecEnv(VecEnv):
@@ -107,12 +109,23 @@ class ArenaVecEnv(VecEnv):
             + cfg.sprint_hit * ev["sprint_hits"][:, 0]
             + cfg.shield_block * (ev["melee_blocked"][:, 1] + ev["arrows_blocked"][:, 0])
             + cfg.shield_break * ev["shield_breaks"][:, 0]
-            + cfg.followup * ev["followup_damage"][:, 0] / C.MAX_HEALTH
         )
-        wasted = (ev["swings"][:, 0] > 0) & (ev["hits"][:, 0] == 0)
-        shaped = shaped - cfg.weak_swing * (wasted + ev["weak_swings"][:, 0])
+        followup = cfg.followup * ev["followup_damage"][:, 0] / C.MAX_HEALTH
+        if cfg.followup_unfaded:
+            reward = reward + followup
+        else:
+            shaped = shaped + followup
         delta = sim.pos[:, 1] - sim.pos[:, 0]
-        near = np.hypot(delta[:, 0], delta[:, 2]) < 4.0
+        distance = np.hypot(delta[:, 0], delta[:, 2])
+        wasted = (ev["swings"][:, 0] > 0) & (ev["hits"][:, 0] == 0)
+        weak = ev["weak_swings"][:, 0]
+        if cfg.exact_miss:
+            blocked = ev["melee_blocked"][:, 0] > 0
+            wasted = wasted & ~blocked & (distance > C.ATTACK_REACH + 0.5)
+            weak = weak * ~blocked
+        fined = wasted + weak
+        shaped = shaped - cfg.weak_swing * fined
+        near = distance < 4.0
         strafing = actions[:, A.STRAFE] != A.NEUTRAL_STRAFE
         shaped = shaped + cfg.strafe * (near & strafing)
         phi = self._potential()
@@ -126,8 +139,8 @@ class ArenaVecEnv(VecEnv):
             "sprint_hit": scale * cfg.sprint_hit * ev["sprint_hits"][:, 0],
             "shield_block": scale * cfg.shield_block * (ev["melee_blocked"][:, 1] + ev["arrows_blocked"][:, 0]),
             "shield_break": scale * cfg.shield_break * ev["shield_breaks"][:, 0],
-            "followup": scale * cfg.followup * ev["followup_damage"][:, 0] / C.MAX_HEALTH,
-            "weak_swing": -scale * cfg.weak_swing * (wasted + ev["weak_swings"][:, 0]),
+            "followup": followup if cfg.followup_unfaded else scale * followup,
+            "weak_swing": -scale * cfg.weak_swing * fined,
             "strafe": scale * cfg.strafe * (near & strafing),
             "aim_spacing": potential_gain,
         }
@@ -186,6 +199,13 @@ class ArenaVecEnv(VecEnv):
     def farm_tally(self) -> dict:
         """Return and clear the reward terms, goal and counters of the episodes finished so far."""
         return self._ledger().drain()
+
+    def set_weapons(self, weapons: tuple[int, ...] | None) -> None:
+        """Limit the weapons the learner and its league may select. None allows all of them."""
+        self.allowed[:] = weapons is None
+        if weapons is not None:
+            self.allowed[:, list(weapons)] = True
+        self.pool.allowed = self.allowed
 
     def _on_reset(self, mask: np.ndarray) -> None:
         self.pool.assign(mask)

@@ -19,35 +19,45 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import BaseCallback
 from torch import nn
 
+from . import constants as C
 from .env import ArenaVecEnv, RewardConfig
 from .opponents import LEAGUE, OpponentPool
 from .policy import NumpyPolicy
 from .sim import SimConfig
 
 MAX_TICKS = 600
+AXE_ONLY = (C.AXE,)
+FIGHT_WEAPONS = (C.AXE, C.BOW, C.CROSSBOW)
 
 
 @dataclass
 class Stage:
-    """One curriculum step with its opponent mix and promotion gate."""
+    """One curriculum step with its opponent mix and promotion gate.
+
+    weapons: the only weapons the learner may select, or None for all of them.
+    floors: the least win rate needed against each named opponent to advance.
+    """
 
     name: str
     mix: dict[str, float]
     gate: float
     min_steps: int
     shaping: float = 1.0
+    weapons: tuple[int, ...] | None = None
+    floors: dict[str, float] | None = None
 
 
 CURRICULUM = [
-    Stage("targets", {"idle": 1.0, "random": 1.0}, 0.85, 20_000),
-    Stage("chasers", {"walker": 1.0, "swinger": 2.0, "random": 0.5}, 0.70, 60_000),
-    Stage("fighters", {"strafer": 1.0, "critter": 1.0, "swinger": 0.5}, 0.60, 150_000, 0.8),
+    Stage("targets", {"idle": 1.0, "random": 1.0}, 0.85, 20_000, weapons=AXE_ONLY),
+    Stage("chasers", {"walker": 1.0, "swinger": 2.0, "random": 0.5}, 0.70, 60_000, weapons=AXE_ONLY),
+    Stage("fighters", {"strafer": 1.0, "critter": 1.0, "swinger": 0.5}, 0.60, 150_000, 0.8, FIGHT_WEAPONS),
     Stage(
         "tactics",
         {"shielder": 1.0, "axeman": 1.0, "archer": 1.0, "critter": 0.5},
         0.55,
         300_000,
         0.6,
+        FIGHT_WEAPONS,
     ),
     Stage(
         "league",
@@ -65,6 +75,7 @@ CURRICULUM = [
         2.0,
         0,
         0.4,
+        FIGHT_WEAPONS,
     ),
 ]
 
@@ -158,6 +169,7 @@ class CurriculumCallback(BaseCallback):
         self.stage_index = index
         stage = self.cfg.stages[index]
         self.arena.reward_cfg.shaping = stage.shaping
+        self.arena.set_weapons(stage.weapons)
         self.arena.pool.set_mix(stage.mix)
         if not first:
             self.stage_start = self.steps

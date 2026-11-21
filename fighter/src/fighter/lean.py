@@ -30,11 +30,16 @@ from .interface import Interface
 from .opponents import LEAGUE, MAX_SNAPSHOTS, OpponentPool, swinger
 from .policy import NumpyPolicy
 from .sim import SimConfig
+from .plans import PLANS
 from .train import CURRICULUM, MAX_TICKS, Stage, limit_threads, peak_rss_gb
 
 HUGE_NEGATIVE = -1e8
 THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS")
 FIGHT = "fight"
+
+
+FLOOR_GAMES = 30
+ADAPT_EVERY = 200_000
 
 
 @dataclass
@@ -70,6 +75,8 @@ class LeanConfig:
     max_rss_gb: float = 2.0
     min_free_gb: float = 2.0
     stages: list[Stage] = field(default_factory=lambda: list(CURRICULUM))
+    plan: str = "melee"
+    adaptive: bool = False
 
 
 def resolve_device(name: str) -> torch.device:
@@ -257,16 +264,18 @@ class EnvSpec:
     n_envs: int
     seed: int
     takeover: bool = False
+    plan: str = "melee"
 
     def build(self) -> ArenaVecEnv:
         if self.task == FIGHT:
-            interface = expert_interface(MAX_TICKS) if self.takeover else None
+            plan = PLANS[self.plan]
+            interface = expert_interface(MAX_TICKS, stance=plan.stance) if self.takeover else None
             pool = LeaguePool(self.n_envs, seed=self.seed + 1, max_ticks=MAX_TICKS, interface=interface)
             return ArenaVecEnv(
                 self.n_envs,
                 pool,
-                SimConfig(),
-                RewardConfig(),
+                SimConfig(ready_gate=plan.ready_gate),
+                RewardConfig(**plan.reward),
                 max_ticks=MAX_TICKS,
                 seed=self.seed,
                 interface=interface,
@@ -328,7 +337,7 @@ class ArenaSlot:
             sim = self.env.sim
             seen = pool.interface.observe(sim, 1, pool.max_ticks, self.arenas)
             self.views["opp_obs"][:count] = np.clip(seen, -5.0, 5.0)
-            self.views["opp_masks"][:count] = pool.interface.masks(sim, 1, rows=self.arenas)
+            self.views["opp_masks"][:count] = pool.interface.masks(sim, 1, pool.allowed, rows=self.arenas)
             self.views["opp_ids"][:count] = pool.snapshot_of[self.arenas]
         return count
 
@@ -347,8 +356,11 @@ class ArenaSlot:
             self.views["truncated"][arena] = bool(info.get("TimeLimit.truncated", False))
         self._publish(obs)
 
-    def set_stage(self, mix: dict[str, float], shaping: float, clear: bool) -> None:
+    def set_stage(
+        self, mix: dict[str, float], shaping: float, clear: bool, weapons: tuple[int, ...] | None = None
+    ) -> None:
         self.env.reward_cfg.shaping = shaping
+        self.env.set_weapons(weapons)
         self.env.pool.set_mix(mix)
         if clear:
             self.env.results.clear()
@@ -389,6 +401,14 @@ class ArenaSlot:
         """Return and clear the reward term sums of the episodes finished in this batch."""
         return self.env.farm_tally()
 
+    def rates(self) -> dict[str, tuple[int, int]]:
+        """Return the recent wins and games against each opponent."""
+        out: dict[str, tuple[int, int]] = {}
+        for name, outcome in self.env.results:
+            wins, games = out.get(name, (0, 0))
+            out[name] = (wins + int(outcome > 0), games + 1)
+        return out
+
     def stats(self) -> tuple[int, int, float]:
         results = self.env.results
         wins = sum(1 for _, outcome in results if outcome > 0)
@@ -426,9 +446,9 @@ class Host:
     """Runs all simulator batches and exposes their joined arrays."""
 
     def __init__(
-        self, task: str, n_envs: int, workers: int, seed: int, stagger: bool, takeover: bool = False
+        self, task: str, n_envs: int, workers: int, seed: int, stagger: bool, takeover: bool = False, plan: str = "melee"
     ):
-        probe = EnvSpec(task, 1, seed, takeover).build()
+        probe = EnvSpec(task, 1, seed, takeover, plan).build()
         self.n_obs = int(np.prod(probe.observation_space.shape))
         self.sizes = [int(n) for n in probe.action_space.nvec]
         self.max_ticks = int(probe.max_ticks)
@@ -457,7 +477,7 @@ class Host:
         self.local: ArenaSlot | None = None
         if workers <= 0:
             self.views = {key: np.zeros(shape, dtype=dtype) for key, (shape, dtype) in layout.items()}
-            self.local = ArenaSlot(EnvSpec(task, n_envs, seed, takeover), self.views, stagger)
+            self.local = ArenaSlot(EnvSpec(task, n_envs, seed, takeover, plan), self.views, stagger)
             return
         names = {}
         self.views = {}
@@ -473,7 +493,7 @@ class Host:
         try:
             for i in range(workers):
                 ours, theirs = context.Pipe()
-                spec = EnvSpec(task, n_envs, seed + 100_003 * i, takeover)
+                spec = EnvSpec(task, n_envs, seed + 100_003 * i, takeover, plan)
                 proc = context.Process(
                     target=_worker, args=(theirs, names, spec, i * n_envs, stagger), daemon=True
                 )
@@ -544,7 +564,7 @@ class LeanTrainer:
         self.out = Path(cfg.out)
         self.out.mkdir(parents=True, exist_ok=True)
         self.log_path = self.out / "progress.jsonl"
-        self.host = Host(task, cfg.n_envs, cfg.workers, cfg.seed, cfg.stagger, takeover)
+        self.host = Host(task, cfg.n_envs, cfg.workers, cfg.seed, cfg.stagger, takeover, cfg.plan)
         self.sizes = self.host.sizes
         self.total_envs = self.host.total
         dev = self.device
@@ -564,6 +584,7 @@ class LeanTrainer:
         self.stage_start = 0
         self.last_snapshot = 0
         self.last_checkpoint = 0
+        self.last_adapt = 0
         self.stop_reason = ""
         self.started = time.monotonic()
         self.snapshots: list[NumpyPolicy] = []
@@ -579,7 +600,7 @@ class LeanTrainer:
     def _enter(self, index: int, clear: bool = True) -> None:
         self.stage_index = index
         stage = self.cfg.stages[index]
-        self.host.call("set_stage", stage.mix, stage.shaping, clear)
+        self.host.call("set_stage", stage.mix, stage.shaping, clear, stage.weapons)
         if clear:
             self.stage_start = self.steps
 
@@ -676,6 +697,35 @@ class LeanTrainer:
                 count += 1
         return {"policy_loss": policy_sum / max(count, 1), "value_loss": value_sum / max(count, 1)}
 
+    def _opponent_rates(self) -> dict[str, tuple[int, int]]:
+        total: dict[str, tuple[int, int]] = {}
+        for part in self.host.call("rates"):
+            for name, (wins, games) in part.items():
+                old = total.get(name, (0, 0))
+                total[name] = (old[0] + wins, old[1] + games)
+        return total
+
+    def _floors_met(self, stage: Stage) -> bool:
+        """Return whether every named opponent meets its floor over enough recent games."""
+        if not stage.floors:
+            return True
+        rates = self._opponent_rates()
+        for name, floor in stage.floors.items():
+            wins, games = rates.get(name, (0, 0))
+            if games < FLOOR_GAMES or wins / games < floor:
+                return False
+        return True
+
+    def _adapt_mix(self, stage: Stage) -> None:
+        """Weight scripted opponents toward the ones the fighter beats least."""
+        rates = self._opponent_rates()
+        mix = dict(stage.mix)
+        for name in mix:
+            if name != LEAGUE and rates.get(name, (0, 0))[1]:
+                wins, games = rates[name]
+                mix[name] = (1.0 - wins / games) ** 2 + 0.05
+        self.host.call("set_stage", mix, stage.shaping, False, stage.weapons)
+
     def _after_rollout(self) -> None:
         cfg = self.cfg
         rows = self.host.call("stats")
@@ -696,9 +746,13 @@ class LeanTrainer:
                 and rate >= stage.gate
                 and in_stage >= stage.min_steps
                 and arena_ticks >= self.host.max_ticks
+                and self._floors_met(stage)
             ):
                 self.add_snapshot()
                 self._enter(self.stage_index + 1)
+            elif last and cfg.adaptive and self.steps - self.last_adapt >= ADAPT_EVERY:
+                self._adapt_mix(stage)
+                self.last_adapt = self.steps
             if self.steps - self.last_snapshot >= cfg.snapshot_every:
                 self.add_snapshot()
                 self.last_snapshot = self.steps

@@ -60,7 +60,8 @@ from .lean import EnvSpec, FIGHT, LeanConfig, LeanTrainer, free_memory_gb, pack_
 from .opponents import SCRIPTED, OpponentPool
 from .policy import NumpyPolicy
 from .sim import SimConfig
-from .train import CURRICULUM, MAX_TICKS, CurriculumCallback, TrainConfig, build_model, limit_threads, peak_rss_gb
+from .plans import PLANS
+from .train import MAX_TICKS, CurriculumCallback, TrainConfig, build_model, limit_threads, peak_rss_gb
 
 FIGHTER = "fighter"
 ROLES = (SHOOTER, BLOCKER, FIGHTER)
@@ -100,6 +101,7 @@ class CampaignConfig:
     test_every: int = 500_000
     checkpoint_every: int = 250_000
     snapshot_every: int = 250_000
+    plan: str = "melee"
     id: str = ""
 
 
@@ -247,6 +249,9 @@ class LeanRunner:
             checkpoint_every=NEVER,
             max_rss_gb=rt.max_rss_gb,
             min_free_gb=rt.min_free_gb,
+            stages=list(PLANS[cfg.plan].stages),
+            plan=cfg.plan,
+            adaptive=PLANS[cfg.plan].adaptive,
         )
         self.task = task
         self.trainer = LeanTrainer(lean, task, takeover=takeover)
@@ -431,6 +436,8 @@ class SB3Runner:
 
 def make_runner(cfg: CampaignConfig, role: str, folder: Path, rt: Runtime):
     """Build the trainer of one role from random weights."""
+    if cfg.plan != "melee" and cfg.trainer != "lean":
+        raise SystemExit("training plans need the lean trainer")
     task = FIGHT if role == FIGHTER else DRILL_OF[role]
     kind = LeanRunner if cfg.trainer == "lean" else SB3Runner
     return kind(task, folder, cfg, rt, cfg.seed + ROLE_SEED[role], role == FIGHTER)
@@ -594,11 +601,12 @@ class RoleRun:
 
     def replay_env(self, n: int, seed: int) -> ArenaVecEnv:
         """Build fresh arenas with the task, stage and experts this role trains on now."""
-        env = EnvSpec(FIGHT if self.fighter else DRILL_OF[self.role], n, seed, self.fighter).build()
+        env = EnvSpec(FIGHT if self.fighter else DRILL_OF[self.role], n, seed, self.fighter, self.cfg.plan).build()
         if self.fighter:
             name = self.runner.info()["stage"]
-            stage = next(item for item in CURRICULUM if item.name == name)
+            stage = next(item for item in PLANS[self.cfg.plan].stages if item.name == name)
             env.reward_cfg.shaping = stage.shaping
+            env.set_weapons(stage.weapons)
             env.pool.set_mix(stage.mix)
             env.interface.experts.install(dict(self.loaded))
         return env
@@ -920,11 +928,19 @@ def evaluate_fighter(root: Path, opponents: list[str], games: int = 8) -> list[d
     cfg = read_config(root)
     meta = json.loads((root / FIGHTER / "policy.json").read_text())
     policy = NumpyPolicy.load(root / FIGHTER / "policy.npz")
-    interface = expert_interface(MAX_TICKS)
+    plan = PLANS[cfg.plan]
+    interface = expert_interface(MAX_TICKS, stance=plan.stance)
     interface.experts.install(load_experts(ExpertStore(root / "experts"), meta["experts"], cfg.id))
     results = []
     for name in opponents:
-        result = play_matches(policy, name, games_per_arena=games, interface=interface)
+        result = play_matches(
+            policy,
+            name,
+            games_per_arena=games,
+            interface=interface,
+            weapons=plan.stages[-1].weapons,
+            sim_config=SimConfig(ready_gate=plan.ready_gate),
+        )
         result["experts"] = meta["experts"]
         results.append(result)
     return results
@@ -948,6 +964,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--trainer", choices=TRAINERS, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--smoke", action="store_true", default=None)
+    p.add_argument("--plan", choices=tuple(PLANS), default=None)
     p.add_argument("--serial", action="store_true", help="run the roles one after another in one process")
     p.add_argument("--roles", default=",".join(ROLES))
     p.add_argument("--envs", dest="n_envs", type=int, default=None)

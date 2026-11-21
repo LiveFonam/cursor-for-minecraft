@@ -298,6 +298,8 @@ LEAGUE = "league"
 class OpponentPool:
     """Assigns one opponent per arena and produces its actions."""
 
+    allowed: np.ndarray | None = None
+
     def __init__(self, n: int, seed: int = 0, max_ticks: int = 600, interface: Interface | None = None):
         self.n = n
         self.interface = interface or SHARED
@@ -382,7 +384,7 @@ class OpponentPool:
         if len(picked) == 0:
             return
         obs = np.clip(self.interface.observe(sim, seat, self.max_ticks, picked), -5.0, 5.0)
-        masks = self.interface.masks(sim, seat, rows=picked)
+        masks = self.interface.masks(sim, seat, self.allowed, rows=picked)
         chosen = self.snapshot_of[picked]
         shared = len(A.NVEC)
         for snap in np.unique(chosen):

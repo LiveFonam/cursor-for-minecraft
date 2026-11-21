@@ -29,6 +29,7 @@ from . import constants as C
 from .interface import SHARED, Interface
 from .obs import ENEMY_IN_SIGHT, OBS_DIM
 from .policy import NumpyPolicy
+from .stance import StanceRules, apply_stance
 
 TAKEOVER_RANGE = 4.5
 RANGE_SCALE = 32.0
@@ -265,18 +266,22 @@ class ExpertSet:
 class TakeoverInterface(Interface):
     """An interface whose masks hand some heads to the active experts."""
 
-    def __init__(self, experts: ExpertSet, inputs=(), heads=(), apply=None):
+    def __init__(self, experts: ExpertSet, inputs=(), heads=(), apply=None, stance: StanceRules | None = None):
         super().__init__(inputs, heads, apply)
         self.experts = experts
+        self.stance = stance
 
     def masks(self, sim, seat, allowed_weapons=None, rows=None) -> np.ndarray:
-        """Return the normal masks with expert heads fixed."""
-        return self.experts.constrain(sim, seat, super().masks(sim, seat, allowed_weapons, rows), rows)
+        """Return the normal masks with expert heads fixed and the scripted rules applied."""
+        mask = self.experts.constrain(sim, seat, super().masks(sim, seat, allowed_weapons, rows), rows)
+        return mask if self.stance is None else apply_stance(self.stance, sim, seat, mask, rows)
 
 
-def expert_interface(max_ticks: int = 600, specs: tuple[ExpertSpec, ...] = SPECS) -> TakeoverInterface:
+def expert_interface(
+    max_ticks: int = 600, specs: tuple[ExpertSpec, ...] = SPECS, stance: StanceRules | None = None
+) -> TakeoverInterface:
     """Build the fighter's interface with empty expert slots."""
-    return TakeoverInterface(ExpertSet(max_ticks, specs))
+    return TakeoverInterface(ExpertSet(max_ticks, specs), stance=stance)
 
 
 def _sync_dir(path: Path) -> None:

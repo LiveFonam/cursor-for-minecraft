@@ -76,6 +76,7 @@ class SimConfig:
     world_size: int | None = None
     world_seed: int = 0
     world_cache: str | None = None
+    ready_gate: float = C.FULL_CHARGE_THRESHOLD
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:

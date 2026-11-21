@@ -35,14 +35,18 @@ def play_matches(
     seed: int = HELD_OUT_SEED,
     deterministic: bool = False,
     interface: Interface | None = None,
+    weapons: tuple[int, ...] | None = None,
+    sim_config: SimConfig | None = None,
 ) -> dict:
     """Play a fixed number of games in every arena and count the results.
 
     interface: the learner's inputs and masks, such as one with experts loaded.
+    weapons: the only weapons the learner may select, or None for all of them.
     """
     pool = OpponentPool(n_envs, seed=seed + 1, max_ticks=MAX_TICKS, interface=interface)
     pool.set_mix({opponent: 1.0})
-    env = ArenaVecEnv(n_envs, pool, SimConfig(), max_ticks=MAX_TICKS, seed=seed, interface=interface)
+    env = ArenaVecEnv(n_envs, pool, sim_config or SimConfig(), max_ticks=MAX_TICKS, seed=seed, interface=interface)
+    env.set_weapons(weapons)
     rng = np.random.default_rng(seed + 2)
     obs = env.reset()
     played = np.zeros(n_envs, dtype=np.int64)
