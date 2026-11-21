@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from world_helpers import FLOOR, Body, flat_raw, make, yi
 
+from fighter.sim import Sim, SimConfig
 from fighter.world import blocks as B
 from fighter.world import gen, pool
 from fighter.world.config import FULL, PROFILES, SURFACE, WorldConfig, profile
@@ -286,6 +287,17 @@ def test_trees_can_be_switched_off():
     raw, _ = gen.generate(SEED, 64, config=WorldConfig(trees=False))
     assert info.trees == 0
     assert not ((raw & 0xFF) == B.LOG).any()
+
+
+def test_small_worlds_keep_enough_trees():
+    assert min(gen.generate(seed, 64)[1].trees for seed in range(1, 41)) >= gen.MIN_TREES
+
+
+@pytest.mark.parametrize(("name", "side"), [("surface", 128), ("full", 64)])
+def test_profiles_choose_their_world_size(name, side, tmp_path):
+    sim = Sim(1, SimConfig(profile=name, world_cache=str(tmp_path)), seed=1)
+    assert (sim.world.base.nx, sim.world.base.nz) == (side, side)
+    sim.close()
 
 
 def test_depth_off_with_fluids_on_has_no_underground():

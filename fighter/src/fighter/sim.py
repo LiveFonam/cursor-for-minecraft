@@ -53,6 +53,7 @@ class SimConfig:
     profile: "arena", "surface" or "full".
     client_model: the client that moves the bodies, shared with the world.
     decisions_per_second: 10, 15 or 20 policy decisions in each 20 game ticks.
+    world_size: side length of the world in blocks, or None for the profile's size.
     """
 
     armor: str = "iron"
@@ -72,7 +73,7 @@ class SimConfig:
     keep_shield_cooldown: bool = False
     decisions_per_second: int = 10
     profile: str = "arena"
-    world_size: int = 128
+    world_size: int | None = None
     world_seed: int = 0
     world_cache: str | None = None
 
@@ -205,7 +206,8 @@ class Sim:
 
         cfg = self.cfg
         settings = world_config.profile(cfg.profile)
-        base = pool.load(cfg.world_seed, cfg.world_size, cfg.world_cache, settings)
+        size = cfg.world_size or world_config.WORLD_SIZES[cfg.profile]
+        base = pool.load(cfg.world_seed, size, cfg.world_cache, settings)
         self.attach_world(Arenas(base, self.n, seed=seed, client_model=cfg.client_model, config=settings))
 
     def attach_world(self, world) -> None:

@@ -48,6 +48,9 @@ SURFACE = WorldConfig(fluids=False, fire=False, depth=False, trees=True)
 # The arena profile is a flat fight and has no world object.
 PROFILES: dict[str, WorldConfig | None] = {"arena": None, "surface": SURFACE, "full": FULL}
 
+# Side length in blocks of a generated world for each profile.
+WORLD_SIZES: dict[str, int] = {"surface": 128, "full": 64}
+
 
 def profile(name: str) -> WorldConfig | None:
     """Return the config of a named profile, or None for the flat arena."""

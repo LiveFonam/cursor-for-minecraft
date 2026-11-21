@@ -15,8 +15,9 @@ import numpy as np
 from . import blocks as B
 from .config import BAND_ABOVE, BAND_BELOW, FULL, WorldConfig
 
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 SIZES = (64, 128, 256)
+MIN_TREES = 6
 Y0 = B.Y_MIN
 HEIGHT = B.WORLD_HEIGHT
 MASK = (1 << 64) - 1
@@ -430,11 +431,11 @@ def generate(
         spots = spots[np.argsort(rng.array(len(spots)), kind="stable")]
         taken = np.zeros((W, W), dtype=bool)
         leaf = B.leaves(1)
-        for x, z in spots.tolist():
-            if rng.random() > (0.028 if forest[x, z] > 0.08 else 0.0015):
-                continue
+
+        def plant(x: int, z: int) -> bool:
+            """Grow a tree if the spot has room, and report whether it did."""
             if x < 3 or z < 3 or x > W - 4 or z > W - 4 or taken[x - 3 : x + 4, z - 3 : z + 4].any():
-                continue
+                return False
             taken[x, z] = True
             base_y = int(top[x, z]) + 1
             tall = rng.integers(4, 7)
@@ -446,7 +447,16 @@ def generate(
                     keep = rng.array(w.shape) < 0.9
                     w[(w == B.AIR) & keep] = leaf
             b[x, z, base_y : base_y + tall] = B.log(1)
-            placed += 1
+            return True
+
+        for x, z in spots.tolist():
+            if rng.random() <= (0.028 if forest[x, z] > 0.08 else 0.0015) and plant(x, z):
+                placed += 1
+        for x, z in spots.tolist():
+            if placed >= MIN_TREES:
+                break
+            if plant(x, z):
+                placed += 1
 
     if river.any():
         water = (ix > t) & (ix <= (level - Y0)[..., None]) & river[..., None]
