@@ -39,6 +39,24 @@ def test_observation_is_egocentric():
     assert obs[1, 23] != pytest.approx(0.0, abs=1e-3)
 
 
+def test_observation_shows_crossbow_needs_a_release():
+    sim = Sim(1, SimConfig(), seed=0)
+    sim.weapon[0, 0] = C.CROSSBOW
+    sim.loaded[0, 0] = True
+    held = A.neutral_actions(sim.weapon.copy())
+    held[0, 0, A.USE] = 1
+    sim._tick(held, first=True)
+    assert sim.events["arrows_fired"][0, 0] == 1
+    obs = build_obs(sim, 0, 600)
+    assert obs[0, 82] == 1.0
+    assert obs[0, 83] == 1.0
+    released = A.neutral_actions(sim.weapon.copy())
+    sim._tick(released, first=True)
+    obs = build_obs(sim, 0, 600)
+    assert obs[0, 82] == 0.0
+    assert obs[0, 83] == 0.0
+
+
 def test_attack_is_masked_until_aim_meets_hitbox():
     sim = Sim(1, SimConfig(), seed=0)
     sim.pos[0, 0] = [0.0, 0.0, 0.0]

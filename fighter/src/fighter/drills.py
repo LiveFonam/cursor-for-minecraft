@@ -97,16 +97,20 @@ class ShootingDrill(DrillEnv):
         yaw_error = np.abs(wrap_degrees(yaw - sim.yaw[:, 0]))
         return yaw_error + np.abs(pitch - sim.pitch[:, 0])
 
+    def _charge(self) -> np.ndarray:
+        """Return how ready the held weapon is, from 0 to 1."""
+        sim = self.sim
+        bow = np.minimum(sim.draw_ticks[:, 0] / C.BOW_FULL_DRAW_TICKS, 1.0)
+        crossbow = np.where(sim.loaded[:, 0], 1.0, sim.load_ticks[:, 0] / C.CROSSBOW_LOAD_TICKS)
+        return np.where(sim.weapon[:, 0] == C.BOW, bow, crossbow)
+
     def _potential(self) -> np.ndarray:
-        return 0.5 * np.exp(-self._aim_error() / 8.0)
+        return 0.5 * np.exp(-self._aim_error() / 8.0) + 0.3 * self._charge()
 
     def _before_step(self) -> None:
         sim = self.sim
         self.pre_aim = np.exp(-self._aim_error() / 4.0)
         self.pre_ready = (sim.draw_ticks[:, 0] >= C.BOW_FULL_DRAW_TICKS) | sim.loaded[:, 0]
-        self.pre_charging = (
-            (sim.draw_ticks[:, 0] > 0) & (sim.draw_ticks[:, 0] < C.BOW_FULL_DRAW_TICKS)
-        ) | (sim.load_ticks[:, 0] > 0)
 
     def _opponent_actions(self) -> np.ndarray:
         sim = self.sim
@@ -132,14 +136,14 @@ class ShootingDrill(DrillEnv):
         self._phi = phi
         fired = ev["arrows_fired"][:, 0]
         good_shot = fired * self.pre_ready * self.pre_aim
-        charging = self.pre_charging * self.pre_aim
         waiting = self.pre_ready & (fired == 0)
+        idle = self._charge() == 0.0
         return (
             1.5 * ev["arrow_hits"][:, 0]
-            + 0.25 * good_shot
-            + 0.02 * charging
+            + 0.35 * good_shot
             - 0.05 * fired
             - 0.01 * waiting
+            - 0.01 * idle
             + gain
         )
 
@@ -202,7 +206,7 @@ class BlockingDrill(DrillEnv):
         self._phi = phi
         raised = self.sim.shield_ticks[:, 0] > 0
         return (
-            ev["arrows_blocked"][:, 0] - ev["arrows_taken"][:, 0] - 0.02 * raised + gain
+            ev["arrows_blocked"][:, 0] - ev["arrows_taken"][:, 0] - 0.06 * raised + gain
         )
 
 
@@ -275,7 +279,7 @@ def shooting_report(policy: NumpyPolicy, seed: int = HELD_OUT_SEED, n_envs: int 
         )
         env = ShootingDrill(n_envs, seed=seed + weapon, weapons=(weapon,))
         baseline = _count_shots(env, lambda _: _baseline_shooter(env, lead=False), 4)
-        ok = (
+        ok = bool(
             learned["shots"] >= 100
             and learned["hit_rate"] >= SHOOT_PASS_RATE
             and learned["hit_rate"] >= baseline["hit_rate"] + SHOOT_LEAD_MARGIN

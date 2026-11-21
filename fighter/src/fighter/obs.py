@@ -8,7 +8,7 @@ from . import actions as A
 from . import constants as C
 from .sim import MAX_ARROWS, Sim, look_vectors
 
-OBS_DIM = 82
+OBS_DIM = 84
 NEAREST_ARROWS = 2
 
 
@@ -164,6 +164,10 @@ def build_obs(sim: Sim, seat: int, max_ticks: int) -> np.ndarray:
     obs[:, 79] = np.clip(lead_yaw_deg / 2.0, -1.0, 1.0)
     obs[:, 80] = np.clip(lead_pitch_deg / 2.0, -1.0, 1.0)
     obs[:, 81] = (sim.draw_ticks[:, me] >= C.BOW_FULL_DRAW_TICKS) | sim.loaded[:, me]
+
+    # The crossbow acts on a fresh press, so the policy must see the held state.
+    obs[:, 82] = sim.use_prev[:, me]
+    obs[:, 83] = sim.load_wait[:, me]
     return obs
 
 
