@@ -17,6 +17,7 @@ EVENT_NAMES = (
     "damage_dealt",
     "damage_taken",
     "swings",
+    "weak_swings",
     "hits",
     "crits",
     "sprint_hits",
@@ -220,7 +221,7 @@ class Sim:
         self._switch_weapons(a[..., A.WEAPON])
         using = self._use_items(a[..., A.USE] == 1)
         if first:
-            self._melee(a[..., A.ATTACK] == 1)
+            self._melee((a[..., A.ATTACK] == 1) & ~using)
         self._move(a, using)
         self._step_arrows()
         self._advance_timers()
@@ -304,6 +305,7 @@ class Sim:
         breaks = blocked & (self.weapon == C.AXE)
 
         self.events["swings"] += attack
+        self.events["weak_swings"] += attack & ~charged
         self.events["hits"] += lands & ~blocked
         self.events["crits"] += crit & ~blocked
         self.events["sprint_hits"] += sprint_hit & ~blocked

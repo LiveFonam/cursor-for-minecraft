@@ -327,6 +327,14 @@ def test_axe_disables_shield_for_five_seconds():
     assert sim.shield_ticks[0, 1] == 1
 
 
+def test_no_swing_while_holding_shield_up():
+    sim = make_sim()
+    aim_at_chest(sim, 0)
+    sim._tick(press(sim, attack=1, use=1), first=True)
+    assert sim.events["swings"][0, 0] == 0
+    assert sim.hp[0, 1] == C.MAX_HEALTH
+
+
 def test_axe_cannot_disable_a_shield_still_rising():
     sim = make_sim()
     sim.weapon[0, 0] = C.AXE
