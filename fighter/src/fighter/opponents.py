@@ -8,11 +8,13 @@ import numpy as np
 
 from . import actions as A
 from . import constants as C
-from .obs import build_masks, build_obs, intercept_angles, view_angles, wrap_degrees
+from .interface import SHARED, Interface
+from .obs import build_masks, intercept_angles, view_angles, wrap_degrees
 from .policy import NumpyPolicy
 from .sim import Sim
 
 MAX_SNAPSHOTS = 12
+RETREAT_HEALTH = 8.0
 
 
 def sample_masked(masks: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -25,8 +27,21 @@ def sample_masked(masks: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 
 @dataclass
+class Facts:
+    """Noise free facts about one seat, computed once per step for all its opponents."""
+
+    distance: np.ndarray
+    want_yaw: np.ndarray
+    want_pitch: np.ndarray
+    aim: np.ndarray
+    charged: np.ndarray
+    grounded: np.ndarray
+    falling: np.ndarray
+
+
+@dataclass
 class View:
-    """Facts a scripted opponent reads from the simulator."""
+    """Facts a scripted opponent reads from the simulator, for the arenas it owns."""
 
     distance: np.ndarray
     yaw_error: np.ndarray
@@ -37,19 +52,17 @@ class View:
     falling: np.ndarray
 
 
-def read_view(sim: Sim, seat: int, rng: np.random.Generator, noise: float) -> View:
+def read_facts(sim: Sim, seat: int) -> Facts:
+    """Compute the shared facts of one seat."""
     other = 1 - seat
     delta = sim.pos[:, other] - sim.pos[:, seat]
     eye = sim.pos[:, seat] + np.array([0.0, C.EYE_HEIGHT, 0.0])
     chest = sim.pos[:, other] + np.array([0.0, C.PLAYER_HEIGHT / 2.0, 0.0])
-    yaw, pitch = view_angles(chest - eye)
-    if noise > 0.0:
-        yaw = yaw + rng.normal(0.0, noise, sim.n)
-        pitch = pitch + rng.normal(0.0, noise, sim.n)
-    return View(
+    want_yaw, want_pitch = view_angles(chest - eye)
+    return Facts(
         distance=np.hypot(delta[:, 0], delta[:, 2]),
-        yaw_error=wrap_degrees(yaw - sim.yaw[:, seat]),
-        pitch_error=pitch - sim.pitch[:, seat],
+        want_yaw=want_yaw,
+        want_pitch=want_pitch,
         aim=sim.aim_hits()[:, seat],
         charged=sim.attack_multiplier()[:, seat] >= C.FULL_CHARGE_THRESHOLD,
         grounded=sim.on_ground[:, seat],
@@ -57,58 +70,99 @@ def read_view(sim: Sim, seat: int, rng: np.random.Generator, noise: float) -> Vi
     )
 
 
+def _rows(rows: np.ndarray | None):
+    return slice(None) if rows is None else rows
+
+
+def _count(sim: Sim, rows: np.ndarray | None) -> int:
+    return sim.n if rows is None else len(rows)
+
+
+def read_view(
+    sim: Sim,
+    seat: int,
+    rng: np.random.Generator,
+    noise: float,
+    facts: Facts | None = None,
+    rows: np.ndarray | None = None,
+) -> View:
+    """Return one opponent's view, drawing aim noise only for the arenas it owns."""
+    if facts is None:
+        facts = read_facts(sim, seat)
+    at = _rows(rows)
+    count = _count(sim, rows)
+    yaw = facts.want_yaw[at]
+    pitch = facts.want_pitch[at]
+    if noise > 0.0:
+        yaw = yaw + rng.normal(0.0, noise, count)
+        pitch = pitch + rng.normal(0.0, noise, count)
+    return View(
+        distance=facts.distance[at],
+        yaw_error=wrap_degrees(yaw - sim.yaw[at, seat]),
+        pitch_error=pitch - sim.pitch[at, seat],
+        aim=facts.aim[at],
+        charged=facts.charged[at],
+        grounded=facts.grounded[at],
+        falling=facts.falling[at],
+    )
+
+
 def steer(a: np.ndarray, yaw_error: np.ndarray, pitch_error: np.ndarray) -> None:
-    a[:, A.YAW] = A.nearest_index(A.YAW_DELTAS, yaw_error)
-    a[:, A.PITCH] = A.nearest_index(A.PITCH_DELTAS, pitch_error)
+    """Choose the look steps closest to a turn given in simulator angles."""
+    a[:, A.YAW], a[:, A.PITCH] = A.turn_indices(yaw_error, pitch_error)
 
 
 def chase(a: np.ndarray, view: View, stop: float = 2.4, retreat: float = 1.4) -> None:
-    a[:, A.FORWARD] = np.select([view.distance > stop, view.distance < retreat], [2, 0], 1)
+    a[:, A.FORWARD] = np.select(
+        [view.distance > stop, view.distance < retreat], [A.KEY_FORWARD, A.KEY_BACK], A.NEUTRAL_FORWARD
+    )
 
 
-def base(sim: Sim, seat: int, rng: np.random.Generator, noise: float):
-    view = read_view(sim, seat, rng, noise)
-    a = A.neutral_actions(sim.weapon[:, seat].copy())
-    a[:, A.WEAPON] = np.where(sim.weapon[:, seat] <= C.AXE, sim.weapon[:, seat], C.SWORD)
+def base(sim: Sim, seat: int, rng: np.random.Generator, noise: float, facts=None, rows=None):
+    at = _rows(rows)
+    view = read_view(sim, seat, rng, noise, facts, rows)
+    held = sim.weapon[at, seat]
+    a = A.neutral_actions(np.where(held <= C.AXE, held, C.SWORD))
     steer(a, view.yaw_error, view.pitch_error)
     return a, view
 
 
-def idle(sim, seat, rng):
-    return A.neutral_actions(np.full(sim.n, C.SWORD))
+def idle(sim, seat, rng, facts=None, rows=None):
+    return A.neutral_actions(np.full(_count(sim, rows), C.SWORD))
 
 
-def random_player(sim, seat, rng):
-    return sample_masked(build_masks(sim, seat), rng)
+def random_player(sim, seat, rng, facts=None, rows=None):
+    return sample_masked(build_masks(sim, seat, rows=rows), rng)
 
 
-def walker(sim, seat, rng):
-    a, view = base(sim, seat, rng, 6.0)
+def walker(sim, seat, rng, facts=None, rows=None):
+    a, view = base(sim, seat, rng, 6.0, facts, rows)
     chase(a, view)
     return a
 
 
-def swinger(sim, seat, rng):
-    a, view = base(sim, seat, rng, 4.0)
+def swinger(sim, seat, rng, facts=None, rows=None):
+    a, view = base(sim, seat, rng, 4.0, facts, rows)
     chase(a, view)
     a[:, A.ATTACK] = view.aim & view.charged
     return a
 
 
-def strafer(sim, seat, rng):
-    a, view = base(sim, seat, rng, 2.5)
+def strafer(sim, seat, rng, facts=None, rows=None):
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.5, facts, rows)
     chase(a, view)
-    phase = (sim.ticks // 16 + seat) % 2
+    phase = (sim.ticks[at] // 16 + seat) % 2
     near = view.distance < 5.0
-    a[:, A.STRAFE] = np.where(near, phase * 2, A.NEUTRAL_STRAFE)
-    tap = sim.sprint_held[:, seat] & ~sim.sprinting[:, seat]
+    a[:, A.STRAFE] = np.where(near, A.KEY_LEFT + phase, A.NEUTRAL_STRAFE)
+    tap = sim.sprint_held[at, seat] & ~sim.sprinting[at, seat]
     a[:, A.SPRINT] = (view.distance > 2.0) & ~tap
     a[:, A.ATTACK] = view.aim & view.charged
     return a
 
 
-def critter(sim, seat, rng):
-    a, view = base(sim, seat, rng, 2.0)
+def critter(sim, seat, rng, facts=None, rows=None):
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
     chase(a, view, stop=2.2)
     a[:, A.SPRINT] = view.distance > 4.0
     a[:, A.JUMP] = (view.distance < 4.0) & view.grounded & view.charged
@@ -116,12 +170,13 @@ def critter(sim, seat, rng):
     return a
 
 
-def shielder(sim, seat, rng):
-    a, view = base(sim, seat, rng, 2.0)
+def shielder(sim, seat, rng, facts=None, rows=None):
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
     chase(a, view)
     other = 1 - seat
-    threat = sim.attack_multiplier()[:, other] >= C.FULL_CHARGE_THRESHOLD
-    ready = sim.shield_disabled[:, seat] == 0
+    threat = sim.attack_multiplier()[at, other] >= C.FULL_CHARGE_THRESHOLD
+    ready = sim.shield_disabled[at, seat] == 0
     guard = (view.distance < 4.5) & threat & ready & ~(view.charged & view.aim)
     a[:, A.USE] = guard
     a[:, A.ATTACK] = view.aim & view.charged & ~guard
@@ -129,37 +184,96 @@ def shielder(sim, seat, rng):
     return a
 
 
-def axeman(sim, seat, rng):
-    a, view = base(sim, seat, rng, 2.0)
+def axeman(sim, seat, rng, facts=None, rows=None):
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
     chase(a, view)
     other = 1 - seat
-    shielded = sim.shield_active[:, other]
-    a[:, A.WEAPON] = np.where(shielded, C.AXE, C.SWORD)
-    holding_axe = sim.weapon[:, seat] == C.AXE
+    shielded = sim.shield_active[at, other]
+    a[:, A.WEAPON] = A.WEAPON_ACTION[np.where(shielded, C.AXE, C.SWORD)]
+    holding_axe = sim.weapon[at, seat] == C.AXE
     a[:, A.ATTACK] = view.aim & (view.charged | (holding_axe & shielded))
     a[:, A.SPRINT] = view.distance > 3.0
     return a
 
 
-def archer(sim, seat, rng):
-    view = read_view(sim, seat, rng, 1.0)
-    a = A.neutral_actions(sim.weapon[:, seat].copy())
+def archer(sim, seat, rng, facts=None, rows=None):
+    at = _rows(rows)
+    view = read_view(sim, seat, rng, 1.0, facts, rows)
     close = view.distance < 3.5
-    a[:, A.WEAPON] = np.where(close, C.SWORD, C.BOW)
+    a = A.neutral_actions(np.where(close, C.SWORD, C.BOW))
     yaw, pitch, _ = intercept_angles(sim, seat, np.full(sim.n, C.BOW_MAX_SPEED))
-    bow_yaw = wrap_degrees(yaw - sim.yaw[:, seat])
-    bow_pitch = pitch - sim.pitch[:, seat]
+    bow_yaw = wrap_degrees(yaw[at] - sim.yaw[at, seat])
+    bow_pitch = pitch[at] - sim.pitch[at, seat]
     steer(
         a,
         np.where(close, view.yaw_error, bow_yaw),
         np.where(close, view.pitch_error, bow_pitch),
     )
-    a[:, A.FORWARD] = np.select([close, view.distance < 8.0, view.distance > 13.0], [2, 0, 2], 1)
-    drawing = sim.weapon[:, seat] == C.BOW
+    a[:, A.FORWARD] = np.select(
+        [close, view.distance < 8.0, view.distance > 13.0],
+        [A.KEY_FORWARD, A.KEY_BACK, A.KEY_FORWARD],
+        A.NEUTRAL_FORWARD,
+    )
+    drawing = sim.weapon[at, seat] == C.BOW
     aimed = (np.abs(bow_yaw) < 3.0) & (np.abs(bow_pitch) < 3.0)
-    full = sim.draw_ticks[:, seat] >= C.BOW_FULL_DRAW_TICKS
+    full = sim.draw_ticks[at, seat] >= C.BOW_FULL_DRAW_TICKS
     a[:, A.USE] = drawing & ~(full & aimed) & ~close
     a[:, A.ATTACK] = close & view.aim & view.charged & ~drawing
+    return a
+
+
+def retreater(sim, seat, rng, facts=None, rows=None):
+    """Fights until hurt, then runs, and turns back when caught or against the border."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    chase(a, view)
+    from_center = np.abs(sim.pos[at, seat][:, [0, 2]] - sim.origin[[0, 2]]).max(axis=1)
+    cornered = (sim.border_half - from_center < 1.5) | (view.distance < 2.0)
+    hurt = (sim.hp[at, seat] <= RETREAT_HEALTH) & ~cornered
+    run = hurt & (view.distance < 9.0)
+    wait = hurt & ~run
+    steer(
+        a,
+        np.where(run, wrap_degrees(view.yaw_error + 180.0), view.yaw_error),
+        np.where(run, -sim.pitch[at, seat], view.pitch_error),
+    )
+    a[:, A.FORWARD] = np.select([run, wait], [A.KEY_FORWARD, A.NEUTRAL_FORWARD], a[:, A.FORWARD])
+    a[:, A.SPRINT] = run | (~wait & (view.distance > 3.0))
+    a[:, A.USE] = wait & (sim.shield_disabled[at, seat] == 0)
+    a[:, A.ATTACK] = view.aim & view.charged & ~hurt
+    return a
+
+
+def hit_and_run(sim, seat, rng, facts=None, rows=None):
+    """Closes while charged, lands one hit at long reach and backs off to recharge."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    closing = view.charged & (view.distance > 2.8)
+    backing = ~view.charged & (view.distance < 5.5)
+    a[:, A.FORWARD] = np.select([closing, backing], [A.KEY_FORWARD, A.KEY_BACK], A.NEUTRAL_FORWARD)
+    a[:, A.SPRINT] = closing
+    phase = (sim.ticks[at] // 16 + seat) % 2
+    a[:, A.STRAFE] = np.where(view.charged, A.NEUTRAL_STRAFE, A.KEY_LEFT + phase)
+    a[:, A.ATTACK] = view.aim & view.charged
+    return a
+
+
+def rusher(sim, seat, rng, facts=None, rows=None):
+    """Holds at range and charges whenever the enemy draws a bow or loads a crossbow."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    other = 1 - seat
+    rush = (sim.load_ticks[at, other] > 0) | (sim.draw_ticks[at, other] > 0) | (view.distance < 3.5)
+    a[:, A.FORWARD] = np.select(
+        [rush & (view.distance > 2.2), rush & (view.distance < 1.4), ~rush & (view.distance > 7.0), ~rush & (view.distance < 5.0)],
+        [A.KEY_FORWARD, A.KEY_BACK, A.KEY_FORWARD, A.KEY_BACK],
+        A.NEUTRAL_FORWARD,
+    )
+    a[:, A.SPRINT] = rush & (view.distance > 2.2)
+    phase = (sim.ticks[at] // 16 + seat) % 2
+    a[:, A.STRAFE] = np.where(rush, A.NEUTRAL_STRAFE, A.KEY_LEFT + phase)
+    a[:, A.ATTACK] = view.aim & view.charged
     return a
 
 
@@ -173,6 +287,9 @@ SCRIPTED = {
     "shielder": shielder,
     "axeman": axeman,
     "archer": archer,
+    "retreater": retreater,
+    "hit_and_run": hit_and_run,
+    "rusher": rusher,
 }
 
 LEAGUE = "league"
@@ -181,8 +298,9 @@ LEAGUE = "league"
 class OpponentPool:
     """Assigns one opponent per arena and produces its actions."""
 
-    def __init__(self, n: int, seed: int = 0, max_ticks: int = 600):
+    def __init__(self, n: int, seed: int = 0, max_ticks: int = 600, interface: Interface | None = None):
         self.n = n
+        self.interface = interface or SHARED
         self.rng = np.random.default_rng(seed)
         self.max_ticks = max_ticks
         self.names: list[str] = ["idle"]
@@ -245,25 +363,31 @@ class OpponentPool:
     def act(self, sim: Sim, seat: int) -> np.ndarray:
         """Return one action per arena for the opponent seat."""
         out = A.neutral_actions(sim.weapon[:, seat].copy())
+        facts = read_facts(sim, seat)
         for i, name in enumerate(self.names):
-            mask = self.assigned == i
-            if not mask.any():
+            rows = np.flatnonzero(self.assigned == i)
+            if len(rows) == 0:
                 continue
             if name == LEAGUE:
-                self._act_league(sim, seat, mask, out)
+                self._act_league(sim, seat, rows, out, facts)
             else:
-                out[mask] = SCRIPTED[name](sim, seat, self.rng)[mask]
+                out[rows] = SCRIPTED[name](sim, seat, self.rng, facts, rows)
         return out
 
-    def _act_league(self, sim: Sim, seat: int, mask: np.ndarray, out: np.ndarray) -> None:
-        fallback = mask & (self.snapshot_of < 0)
-        if fallback.any():
-            out[fallback] = swinger(sim, seat, self.rng)[fallback]
-        chosen = self.snapshot_of[mask & (self.snapshot_of >= 0)]
-        if len(chosen) == 0:
+    def _act_league(self, sim: Sim, seat: int, rows: np.ndarray, out: np.ndarray, facts: Facts) -> None:
+        fallback = rows[self.snapshot_of[rows] < 0]
+        if len(fallback):
+            out[fallback] = swinger(sim, seat, self.rng, facts, fallback)
+        picked = rows[self.snapshot_of[rows] >= 0]
+        if len(picked) == 0:
             return
-        obs = build_obs(sim, seat, self.max_ticks)
-        masks = build_masks(sim, seat)
+        obs = np.clip(self.interface.observe(sim, seat, self.max_ticks, picked), -5.0, 5.0)
+        masks = self.interface.masks(sim, seat, rows=picked)
+        chosen = self.snapshot_of[picked]
+        shared = len(A.NVEC)
         for snap in np.unique(chosen):
-            pick = mask & (self.snapshot_of == snap)
-            out[pick] = self.snapshots[snap].act(obs[pick], masks[pick], self.rng)
+            here = chosen == snap
+            acted = self.snapshots[snap].act(obs[here], masks[here], self.rng)
+            out[picked[here]] = acted[:, :shared]
+            if self.interface.apply is not None:
+                self.interface.apply(sim, seat, acted[:, shared:], picked[here])

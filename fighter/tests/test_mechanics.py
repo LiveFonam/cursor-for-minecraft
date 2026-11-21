@@ -43,7 +43,7 @@ def run_ticks(sim, action, ticks):
         sim._tick(action, first=True)
 
 
-def steady_speed(forward=2, sprint=0, use=0, ticks=200):
+def steady_speed(forward=A.KEY_FORWARD, sprint=0, use=0, ticks=200):
     sim = make_sim(distance=20.0)
     sim.cfg.arena_half = 10000.0
     sim.pos[0, 1] = [500.0, 0.0, 0.0]
@@ -62,8 +62,8 @@ def test_sprint_speed_matches_wiki():
     assert steady_speed(sprint=1) == pytest.approx(5.612, rel=0.002)
 
 
-def test_shield_slows_to_sneak_speed():
-    assert steady_speed(use=1) == pytest.approx(1.3, rel=0.01)
+def test_shield_slows_to_item_use_speed():
+    assert steady_speed(use=1) == pytest.approx(0.863, rel=0.01)
 
 
 def test_jump_apex_matches_wiki():
@@ -81,7 +81,7 @@ def test_jump_apex_matches_wiki():
 def test_sprint_jump_speed_near_wiki():
     sim = make_sim(distance=50.0)
     sim.cfg.arena_half = 10000.0
-    a = press(sim, forward=2, sprint=1, jump=1)
+    a = press(sim, forward=A.KEY_FORWARD, sprint=1, jump=1)
     run_ticks(sim, a, 120)
     start = sim.pos[0, 0].copy()
     run_ticks(sim, a, 240)
@@ -101,7 +101,7 @@ def test_walls_stop_player_and_sprint():
     sim = make_sim(distance=3.0)
     sim.pos[0, 0] = [0.0, 0.0, C.ARENA_HALF_WIDTH - 1.0]
     sim.pos[0, 1] = [0.0, 0.0, 0.0]
-    a = press(sim, forward=2, sprint=1)
+    a = press(sim, forward=A.KEY_FORWARD, sprint=1)
     run_ticks(sim, a, 40)
     assert sim.pos[0, 0, 2] == pytest.approx(C.ARENA_HALF_WIDTH - C.PLAYER_WIDTH / 2)
     assert not sim.sprinting[0, 0]
@@ -144,7 +144,7 @@ def test_axe_damage_and_attack_speed():
     sim = make_sim()
     sim.weapon[0, 0] = C.AXE
     aim_at_chest(sim)
-    sim._tick(press(sim, attack=1, weapon=C.AXE), first=True)
+    sim._tick(press(sim, attack=1, weapon=A.WEAPON_ACTION[C.AXE]), first=True)
     assert sim.hp[0, 1] == pytest.approx(C.MAX_HEALTH - 9.0)
     assert C.TICKS_PER_SECOND / C.WEAPON_ATTACK_SPEED[C.AXE] == 20.0
 
@@ -166,11 +166,11 @@ def test_reach_limits_melee():
 
 def test_critical_hit_needs_falling_and_multiplies():
     sim = make_sim()
-    aim_at_chest(sim)
     sim.pos[0, 0, 1] = 0.5
     aim_at_chest(sim)
     sim.on_ground[0, 0] = False
     sim.vel[0, 0, 1] = -0.2
+    sim.combat.fall_distance[0, 0] = 0.2
     sim._tick(press(sim, attack=1), first=True)
     assert sim.hp[0, 1] == pytest.approx(C.MAX_HEALTH - 7.0 * 1.5)
     assert sim.events["crits"][0, 0] == 1
@@ -192,6 +192,7 @@ def test_uncharged_hit_cannot_crit():
     aim_at_chest(sim)
     sim.on_ground[0, 0] = False
     sim.vel[0, 0, 1] = -0.2
+    sim.combat.fall_distance[0, 0] = 0.2
     sim.attack_ticks[0, 0] = 2.0
     sim._tick(press(sim, attack=1), first=True)
     assert sim.events["crits"][0, 0] == 0
@@ -206,7 +207,7 @@ def test_sprint_hit_adds_knockback_and_stops_sprint():
     aim_at_chest(sprint)
     sprint.sprinting[0, 0] = True
     sprint.sprint_held[0, 0] = True
-    sprint._tick(press(sprint, attack=1, forward=2, sprint=1), first=True)
+    sprint._tick(press(sprint, attack=1, forward=A.KEY_FORWARD, sprint=1), first=True)
 
     assert sprint.events["sprint_hits"][0, 0] == 1
     assert not sprint.sprinting[0, 0]
@@ -219,9 +220,10 @@ def test_sprint_hit_takes_priority_over_crit():
     aim_at_chest(sim)
     sim.on_ground[0, 0] = False
     sim.vel[0, 0, 1] = -0.2
+    sim.combat.fall_distance[0, 0] = 0.2
     sim.sprinting[0, 0] = True
     sim.sprint_held[0, 0] = True
-    sim._tick(press(sim, attack=1, forward=2, sprint=1), first=True)
+    sim._tick(press(sim, attack=1, forward=A.KEY_FORWARD, sprint=1), first=True)
     assert sim.events["crits"][0, 0] == 0
     assert sim.events["sprint_hits"][0, 0] == 1
 
@@ -231,11 +233,11 @@ def test_w_tap_is_needed_to_sprint_again():
     aim_at_chest(sim)
     sim.sprinting[0, 0] = True
     sim.sprint_held[0, 0] = True
-    held = press(sim, forward=2, sprint=1)
-    sim._tick(press(sim, attack=1, forward=2, sprint=1), first=True)
+    held = press(sim, forward=A.KEY_FORWARD, sprint=1)
+    sim._tick(press(sim, attack=1, forward=A.KEY_FORWARD, sprint=1), first=True)
     run_ticks(sim, held, 3)
     assert not sim.sprinting[0, 0]
-    sim._tick(press(sim, forward=1, sprint=1), first=True)
+    sim._tick(press(sim, forward=A.NEUTRAL_FORWARD, sprint=1), first=True)
     sim._tick(held, first=True)
     assert sim.sprinting[0, 0]
 
@@ -313,14 +315,14 @@ def test_axe_disables_shield_for_five_seconds():
     sim.weapon[0, 0] = C.AXE
     aim_at_chest(sim, 0)
     sim.shield_ticks[0, 1] = C.SHIELD_RAISE_TICKS
-    a = press(sim, attack=1, weapon=C.AXE)
+    a = press(sim, attack=1, weapon=A.WEAPON_ACTION[C.AXE])
     a[0, 1, A.USE] = 1
     sim._tick(a, first=True)
     assert sim.events["shield_breaks"][0, 0] == 1
     assert sim.hp[0, 1] == C.MAX_HEALTH
     assert sim.shield_disabled[0, 1] == C.SHIELD_DISABLE_TICKS - 1
-    guard = press(sim, seat=1, use=1, weapon=C.AXE)
-    guard[0, 0, A.WEAPON] = C.AXE
+    guard = press(sim, seat=1, use=1, weapon=A.WEAPON_ACTION[C.AXE])
+    guard[0, 0, A.WEAPON] = A.WEAPON_ACTION[C.AXE]
     run_ticks(sim, guard, C.SHIELD_DISABLE_TICKS - 1)
     assert sim.shield_ticks[0, 1] == 0
     run_ticks(sim, guard, 1)
@@ -340,7 +342,7 @@ def test_axe_cannot_disable_a_shield_still_rising():
     sim.weapon[0, 0] = C.AXE
     aim_at_chest(sim, 0)
     sim.shield_ticks[0, 1] = 1
-    a = press(sim, attack=1, weapon=C.AXE)
+    a = press(sim, attack=1, weapon=A.WEAPON_ACTION[C.AXE])
     a[0, 1, A.USE] = 1
     sim._tick(a, first=True)
     assert sim.events["shield_breaks"][0, 0] == 0
@@ -379,9 +381,9 @@ def test_bow_speed_curve():
 def fire_bow(sim, draw):
     sim.weapon[0, 0] = C.BOW
     aim_at_chest(sim, 0)
-    hold = press(sim, use=1, weapon=C.BOW)
+    hold = press(sim, use=1, weapon=A.WEAPON_ACTION[C.BOW])
     run_ticks(sim, hold, draw)
-    sim._tick(press(sim, use=0, weapon=C.BOW), first=True)
+    sim._tick(press(sim, use=0, weapon=A.WEAPON_ACTION[C.BOW]), first=True)
 
 
 def test_full_bow_shot_damage_range():
@@ -406,14 +408,14 @@ def test_crossbow_needs_full_load_then_a_new_press():
     sim = make_sim(distance=6.0)
     sim.weapon[0, 0] = C.CROSSBOW
     aim_at_chest(sim, 0)
-    hold = press(sim, use=1, weapon=C.CROSSBOW)
+    hold = press(sim, use=1, weapon=A.WEAPON_ACTION[C.CROSSBOW])
     run_ticks(sim, hold, C.CROSSBOW_LOAD_TICKS - 1)
     assert not sim.loaded[0, 0]
     run_ticks(sim, hold, 1)
     assert sim.loaded[0, 0]
     run_ticks(sim, hold, 3)
     assert not sim.arrow_on.any()
-    release = press(sim, use=0, weapon=C.CROSSBOW)
+    release = press(sim, use=0, weapon=A.WEAPON_ACTION[C.CROSSBOW])
     sim._tick(release, first=True)
     sim._tick(hold, first=True)
     assert sim.events["arrows_fired"][0, 0] == 1
@@ -427,7 +429,7 @@ def test_crossbow_damage_range():
         sim.weapon[0, 0] = C.CROSSBOW
         sim.loaded[0, 0] = True
         aim_at_chest(sim, 0)
-        sim._tick(press(sim, use=1, weapon=C.CROSSBOW), first=True)
+        sim._tick(press(sim, use=1, weapon=A.WEAPON_ACTION[C.CROSSBOW]), first=True)
         run_ticks(sim, A.neutral_actions(sim.weapon.copy()), 6)
         seen.append(C.MAX_HEALTH - sim.hp[0, 1])
     assert min(seen) >= 7.0
@@ -451,7 +453,7 @@ def test_shield_blocks_arrow_from_front_only():
 
 def test_weapon_switch_resets_cooldown():
     sim = make_sim()
-    sim._tick(press(sim, weapon=C.AXE), first=True)
+    sim._tick(press(sim, weapon=A.WEAPON_ACTION[C.AXE]), first=True)
     assert sim.weapon[0, 0] == C.AXE
     assert sim.attack_ticks[0, 0] == 1.0
 

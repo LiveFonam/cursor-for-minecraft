@@ -28,3 +28,5 @@ packages = ["src/fighter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not speed'"
+markers = ["speed: timing gates that need a quiet machine"]

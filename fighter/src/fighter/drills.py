@@ -10,6 +10,7 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from . import actions as A
+from . import arrows
 from . import constants as C
 from .env import ArenaVecEnv
 from .evaluate import HELD_OUT_SEED, wilson_interval
@@ -20,16 +21,30 @@ from .sim import SimConfig
 from .train import TrainConfig, build_model, limit_threads, peak_rss_gb
 
 DRILL_TICKS = 300
+DRILL_ARROWS = 10_000
 SHOOT_PASS_RATE = 0.50
 SHOOT_LEAD_MARGIN = 0.10
 BLOCK_PASS_RATE = 0.85
 BLOCK_MAX_UPTIME = 0.70
+RAISE_WEIGHT = 0.3
+DRILL_STEPS = 2_000_000
+DRILL_MINUTES = 30.0
+CHECK_EVERY = 100_000
+DRILL_MAX_YAW = 45.0
+DRILL_MAX_PITCH = 20.0
+WIDE_TURNS = np.concatenate(
+    [
+        A.HEAD_OFFSETS[A.YAW] + np.flatnonzero(np.abs(A.YAW_DELTAS) > DRILL_MAX_YAW),
+        A.HEAD_OFFSETS[A.PITCH] + np.flatnonzero(np.abs(A.PITCH_DELTAS) > DRILL_MAX_PITCH),
+    ]
+)
 
 
 class DrillEnv(ArenaVecEnv):
     """A fixed-length arena where nobody can die."""
 
     locked_heads: tuple[tuple[int, int], ...] = ()
+    goal_terms: tuple[str, ...] = ()
 
     def __init__(self, n_envs: int, sim_config: SimConfig, seed: int):
         pool = OpponentPool(n_envs, seed=seed + 1, max_ticks=DRILL_TICKS)
@@ -43,6 +58,10 @@ class DrillEnv(ArenaVecEnv):
             start = A.HEAD_OFFSETS[head]
             mask[:, start : start + A.NVEC[head]] = False
             mask[:, start + keep] = True
+        # The target stays in front, so drills leave out the turn steps over these limits.
+        mask[:, WIDE_TURNS] = False
+        single = self.allowed.sum(axis=1) == 1
+        mask[single, A.HEAD_OFFSETS[A.WEAPON] + A.WEAPON_KEEP] = False
         return mask
 
     def _terminal(self):
@@ -57,9 +76,14 @@ class DrillEnv(ArenaVecEnv):
         self.sim.hp[:] = C.MAX_HEALTH
         self.sim.hurt_timer[:] = 0
 
+    def _goal(self, ev: dict[str, np.ndarray], outcome: np.ndarray) -> np.ndarray:
+        return np.zeros(self.num_envs)
+
 
 class ShootingDrill(DrillEnv):
     """Hit a target that runs around the shooter with a bow or crossbow."""
+
+    goal_terms = ("hits",)
 
     locked_heads = (
         (A.FORWARD, A.NEUTRAL_FORWARD),
@@ -67,13 +91,21 @@ class ShootingDrill(DrillEnv):
         (A.SPRINT, 0),
         (A.JUMP, 0),
         (A.ATTACK, 0),
+        (A.SNEAK, 0),
+        (A.LOCK_AIM, 0),
     )
 
     def __init__(self, n_envs: int, seed: int = 0, weapons: tuple[int, ...] = (C.BOW, C.CROSSBOW)):
         self.weapons = np.array(weapons)
         self.side = np.ones(n_envs)
         self.runs = np.zeros(n_envs, dtype=bool)
-        config = SimConfig(armor="none", spawn_min=7.0, spawn_max=14.0, face_noise_deg=25.0)
+        config = SimConfig(
+            armor="none",
+            spawn_min=7.0,
+            spawn_max=14.0,
+            face_noise_deg=25.0,
+            start_arrows=DRILL_ARROWS,
+        )
         super().__init__(n_envs, config, seed)
         self._on_reset(np.ones(n_envs, dtype=bool))
         self._phi = self._potential()
@@ -91,9 +123,9 @@ class ShootingDrill(DrillEnv):
         self.runs[idx] = rng.random(len(idx)) < 0.5
 
     def _aim_error(self) -> np.ndarray:
+        """Return how far the view is from a shot fired now, at the speed the lead inputs use."""
         sim = self.sim
-        speed = np.where(sim.weapon[:, 0] == C.CROSSBOW, C.CROSSBOW_SPEED, C.BOW_MAX_SPEED)
-        yaw, pitch, _ = intercept_angles(sim, 0, speed)
+        yaw, pitch, _ = intercept_angles(sim, 0, arrows.aim_speed(sim, 0))
         yaw_error = np.abs(wrap_degrees(yaw - sim.yaw[:, 0]))
         return yaw_error + np.abs(pitch - sim.pitch[:, 0])
 
@@ -103,6 +135,10 @@ class ShootingDrill(DrillEnv):
         bow = np.minimum(sim.draw_ticks[:, 0] / C.BOW_FULL_DRAW_TICKS, 1.0)
         crossbow = np.where(sim.loaded[:, 0], 1.0, sim.load_ticks[:, 0] / C.CROSSBOW_LOAD_TICKS)
         return np.where(sim.weapon[:, 0] == C.BOW, bow, crossbow)
+
+    def _goal(self, ev: dict[str, np.ndarray], outcome: np.ndarray) -> np.ndarray:
+        """Return the arrows that hit the target this step."""
+        return ev["arrow_hits"][:, 0].astype(float)
 
     def _potential(self) -> np.ndarray:
         return 0.5 * np.exp(-self._aim_error() / 8.0) + 0.3 * self._charge()
@@ -126,7 +162,7 @@ class ShootingDrill(DrillEnv):
         to_center = np.degrees(np.arctan2(sim.pos[:, 1, 0], -sim.pos[:, 1, 2]))
         sim.yaw[:, 1] = np.where(near_wall, to_center, heading)
         a = A.neutral_actions(np.full(self.num_envs, C.SWORD))
-        a[:, A.FORWARD] = 2
+        a[:, A.FORWARD] = A.KEY_FORWARD
         a[:, A.SPRINT] = self.runs
         return a
 
@@ -138,6 +174,14 @@ class ShootingDrill(DrillEnv):
         good_shot = fired * self.pre_ready * self.pre_aim
         waiting = self.pre_ready & (fired == 0)
         idle = self._charge() == 0.0
+        self.reward_terms = {
+            "hits": 1.5 * ev["arrow_hits"][:, 0],
+            "good_shot": 0.35 * good_shot,
+            "fired": -0.05 * fired,
+            "waiting": -0.01 * waiting,
+            "idle": -0.01 * idle,
+            "aim_charge": gain,
+        }
         return (
             1.5 * ev["arrow_hits"][:, 0]
             + 0.35 * good_shot
@@ -151,18 +195,29 @@ class ShootingDrill(DrillEnv):
 class BlockingDrill(DrillEnv):
     """Raise the shield in time against a scripted archer."""
 
+    goal_terms = ("blocked", "taken")
+
     locked_heads = (
         (A.FORWARD, A.NEUTRAL_FORWARD),
         (A.STRAFE, A.NEUTRAL_STRAFE),
         (A.SPRINT, 0),
         (A.JUMP, 0),
         (A.ATTACK, 0),
+        (A.SNEAK, 0),
+        (A.LOCK_AIM, 0),
     )
 
     def __init__(self, n_envs: int, seed: int = 0):
         self.hold_for = np.full(n_envs, C.BOW_FULL_DRAW_TICKS, dtype=np.int64)
         self.rest = np.zeros(n_envs, dtype=np.int64)
-        config = SimConfig(armor="none", spawn_min=8.0, spawn_max=15.0, face_noise_deg=45.0)
+        self.raise_level = np.zeros(n_envs)
+        config = SimConfig(
+            armor="none",
+            spawn_min=8.0,
+            spawn_max=15.0,
+            face_noise_deg=45.0,
+            start_arrows=DRILL_ARROWS,
+        )
         super().__init__(n_envs, config, seed)
         self.allowed[:] = False
         self.allowed[:, C.SWORD] = True
@@ -179,6 +234,7 @@ class BlockingDrill(DrillEnv):
         if len(idx) == 0:
             return
         self.sim.weapon[idx, 1] = C.BOW
+        self.raise_level[idx] = 0.0
         self._new_shot(idx)
 
     def _potential(self) -> np.ndarray:
@@ -186,6 +242,10 @@ class BlockingDrill(DrillEnv):
         delta = sim.pos[:, 1] - sim.pos[:, 0]
         want, _ = view_angles(delta + np.array([0.0, 1e-3, 0.0]))
         return 0.3 * np.cos(np.radians(wrap_degrees(want - sim.yaw[:, 0])))
+
+    def _goal(self, ev: dict[str, np.ndarray], outcome: np.ndarray) -> np.ndarray:
+        """Return the arrows blocked this step."""
+        return ev["arrows_blocked"][:, 0].astype(float)
 
     def _opponent_actions(self) -> np.ndarray:
         sim = self.sim
@@ -204,9 +264,21 @@ class BlockingDrill(DrillEnv):
         phi = self._potential()
         gain = phi - self._phi
         self._phi = phi
-        raised = self.sim.shield_ticks[:, 0] > 0
+        # Only a shield that can block pays the upkeep. Raising earns a progress term discounted
+        # like the potential, so every press and release loop earns less than not pressing.
+        level = np.minimum(self.sim.shield_ticks[:, 0] / C.SHIELD_RAISE_TICKS, 1.0)
+        progress = RAISE_WEIGHT * (TrainConfig.gamma * level - self.raise_level)
+        self.raise_level = level
+        ready = self.sim.shield_active[:, 0]
+        self.reward_terms = {
+            "blocked": ev["arrows_blocked"][:, 0],
+            "taken": -ev["arrows_taken"][:, 0],
+            "shield_up": -0.06 * ready,
+            "facing": gain,
+            "raise_progress": progress,
+        }
         return (
-            ev["arrows_blocked"][:, 0] - ev["arrows_taken"][:, 0] - 0.06 * raised + gain
+            ev["arrows_blocked"][:, 0] - ev["arrows_taken"][:, 0] - 0.06 * ready + gain + progress
         )
 
 
@@ -333,14 +405,14 @@ DRILLS = {
 def train_drill(
     name: str,
     out: str,
-    steps: int = 400_000,
+    steps: int = DRILL_STEPS,
     seed: int = 11,
-    max_minutes: float = 9.0,
+    max_minutes: float = DRILL_MINUTES,
     n_envs: int = 24,
     threads: int = 2,
     max_rss_gb: float = 2.0,
 ) -> dict:
-    """Train one drill from random weights and run its pass test."""
+    """Train one drill from random weights, score it at checkpoints and stop at the first pass."""
     limit_threads(threads)
     env_class, report_fn = DRILLS[name]
     path = Path(out)
@@ -350,16 +422,20 @@ def train_drill(
     model = build_model(env, cfg)
     callback = _TimeLimit(max_minutes, max_rss_gb)
     started = time.monotonic()
-    model.learn(steps, callback=callback)
+    while True:
+        chunk = min(CHECK_EVERY, steps - model.num_timesteps)
+        model.learn(chunk, callback=callback, reset_num_timesteps=False)
+        policy = NumpyPolicy.from_sb3(model)
+        report = report_fn(policy)
+        if report["passed"] or callback.stop_reason or model.num_timesteps >= steps:
+            break
     elapsed = time.monotonic() - started
-    policy = NumpyPolicy.from_sb3(model)
     policy.save(path / "policy.npz")
-    report = report_fn(policy)
     report["train"] = {
         "steps": int(model.num_timesteps),
         "minutes": round(elapsed / 60.0, 2),
         "peak_rss_gb": round(peak_rss_gb(), 3),
-        "stopped_by": callback.stop_reason or "step budget",
+        "stopped_by": callback.stop_reason or ("passed" if report["passed"] else "step budget"),
         "seed": seed,
     }
     (path / "report.json").write_text(json.dumps(report, indent=2))

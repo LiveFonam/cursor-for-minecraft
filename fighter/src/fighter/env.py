@@ -11,9 +11,15 @@ from stable_baselines3.common.vec_env import VecEnv
 
 from . import actions as A
 from . import constants as C
-from .obs import OBS_DIM, build_masks, build_obs, view_angles, wrap_degrees
+from .combat import RoundRules, round_timeout
+from .farmwatch import Ledger
+from .interface import SHARED, Interface
+from .obs import view_angles, wrap_degrees
 from .opponents import OpponentPool
 from .sim import Sim, SimConfig
+
+ITEM_NAMES = ("sword", "axe", "bow", "crossbow")
+OUT_OF_REACH_BAND = 1.5
 
 
 @dataclass
@@ -41,6 +47,7 @@ class ArenaVecEnv(VecEnv):
     """Runs seat 0 as the learner and seat 1 through an opponent pool."""
 
     render_mode = None
+    goal_terms: tuple[str, ...] = ("damage_dealt", "damage_taken", "win", "timeout_margin")
 
     def __init__(
         self,
@@ -50,16 +57,20 @@ class ArenaVecEnv(VecEnv):
         reward: RewardConfig | None = None,
         max_ticks: int = 600,
         seed: int = 0,
+        round_rules: RoundRules | None = None,
+        interface: Interface | None = None,
     ):
-        observation_space = gym.spaces.Box(-5.0, 5.0, shape=(OBS_DIM,), dtype=np.float32)
-        action_space = gym.spaces.MultiDiscrete(A.NVEC)
+        self.interface = interface or SHARED
+        observation_space = gym.spaces.Box(-5.0, 5.0, shape=(self.interface.obs_dim,), dtype=np.float32)
+        action_space = gym.spaces.MultiDiscrete(self.interface.nvec)
         super().__init__(n_envs, observation_space, action_space)
         self.sim = Sim(n_envs, sim_config, seed=seed)
         self.pool = pool
         self.reward_cfg = reward or RewardConfig()
         self.max_ticks = max_ticks
+        self.round_rules = round_rules
         self.allowed = np.ones((n_envs, C.NUM_WEAPONS), dtype=bool)
-        self._actions = np.zeros((n_envs, len(A.NVEC)), dtype=np.int64)
+        self._actions = np.zeros((n_envs, len(self.interface.nvec)), dtype=np.int64)
         self.episode_return = np.zeros(n_envs)
         self.episode_length = np.zeros(n_envs, dtype=np.int64)
         self.results: deque[tuple[str, int]] = deque(maxlen=400)
@@ -107,12 +118,30 @@ class ArenaVecEnv(VecEnv):
         phi = self._potential()
         potential_gain = phi - self._phi
         self._phi = phi
+        scale = cfg.shaping
+        self.reward_terms = {
+            "damage_dealt": cfg.damage_dealt * ev["damage_dealt"][:, 0] / C.MAX_HEALTH,
+            "damage_taken": -cfg.damage_taken * ev["damage_taken"][:, 0] / C.MAX_HEALTH,
+            "crit": scale * cfg.crit * ev["crits"][:, 0],
+            "sprint_hit": scale * cfg.sprint_hit * ev["sprint_hits"][:, 0],
+            "shield_block": scale * cfg.shield_block * (ev["melee_blocked"][:, 1] + ev["arrows_blocked"][:, 0]),
+            "shield_break": scale * cfg.shield_break * ev["shield_breaks"][:, 0],
+            "followup": scale * cfg.followup * ev["followup_damage"][:, 0] / C.MAX_HEALTH,
+            "weak_swing": -scale * cfg.weak_swing * (wasted + ev["weak_swings"][:, 0]),
+            "strafe": scale * cfg.strafe * (near & strafing),
+            "aim_spacing": potential_gain,
+        }
         return reward + cfg.shaping * shaped + potential_gain
 
     def _terminal(self) -> tuple[np.ndarray, np.ndarray]:
         hp = self.sim.hp
         ko = (hp[:, 0] <= 0.0) | (hp[:, 1] <= 0.0)
-        timeout = self.sim.ticks >= self.max_ticks
+        if self.round_rules is None:
+            timeout = self.sim.ticks >= self.max_ticks
+        else:
+            timeout = round_timeout(self.round_rules, self.sim.ticks, self.sim.combat.last_hit_tick, hp)
+        if self.sim.world is not None:
+            timeout = timeout | self.sim.world.overflowed()
         return ko, timeout & ~ko
 
     def _outcome_reward(self, ko: np.ndarray, timeout: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -123,8 +152,40 @@ class ArenaVecEnv(VecEnv):
         outcome[ko & (hp[:, 0] <= 0.0) & (hp[:, 1] > 0.0)] = -1
         bonus = cfg.win * outcome.astype(float)
         margin = (hp[:, 0] - hp[:, 1]) / C.MAX_HEALTH
+        self.outcome_terms = {"win": bonus, "timeout_margin": timeout * cfg.timeout_margin * margin}
         bonus = bonus + timeout * cfg.timeout_margin * margin
         return bonus, outcome
+
+    def _goal(self, ev: dict[str, np.ndarray], outcome: np.ndarray) -> np.ndarray:
+        """Return the progress on the real goal this step, here a won fight."""
+        return (outcome > 0).astype(float)
+
+    def _behaviour(self, actions: np.ndarray, ev: dict[str, np.ndarray]) -> tuple[dict, dict]:
+        """Return per step counts and the states whose rising edges are counted."""
+        sim = self.sim
+        delta = sim.pos[:, 1] - sim.pos[:, 0]
+        distance = np.hypot(delta[:, 0], delta[:, 2])
+        counts = {
+            "arrows_fired": ev["arrows_fired"][:, 0],
+            "arrows_picked": ev["arrows_picked"][:, 0],
+            "weapon_switches": actions[:, A.WEAPON] != A.WEAPON_KEEP,
+            "out_of_reach": (distance > C.ATTACK_REACH) & (distance <= C.ATTACK_REACH + OUT_OF_REACH_BAND),
+        }
+        use = actions[:, A.USE] > 0
+        held = sim.weapon[:, 0]
+        edges = {f"use_{name}": use & (held == item) for item, name in enumerate(ITEM_NAMES)}
+        edges["shield_raises"] = sim.shield_ticks[:, 0] > 0
+        return counts, edges
+
+    def _ledger(self) -> Ledger:
+        if "ledger" not in self.__dict__:
+            minutes = 1.0 / (60.0 * self.sim.cfg.decisions_per_second)
+            self.ledger = Ledger(self.num_envs, self.goal_terms, minutes)
+        return self.ledger
+
+    def farm_tally(self) -> dict:
+        """Return and clear the reward terms, goal and counters of the episodes finished so far."""
+        return self._ledger().drain()
 
     def _on_reset(self, mask: np.ndarray) -> None:
         self.pool.assign(mask)
@@ -135,13 +196,13 @@ class ArenaVecEnv(VecEnv):
     def _after_step(self) -> None:
         return None
 
-    def observe(self) -> np.ndarray:
-        """Return the learner observation."""
-        return np.clip(build_obs(self.sim, 0, self.max_ticks), -5.0, 5.0)
+    def observe(self, rows: np.ndarray | None = None) -> np.ndarray:
+        """Return the learner observation of all or the selected arenas."""
+        return np.clip(self.interface.observe(self.sim, 0, self.max_ticks, rows), -5.0, 5.0)
 
     def action_masks(self) -> np.ndarray:
         """Return the learner action masks."""
-        return build_masks(self.sim, 0, self.allowed)
+        return self.interface.masks(self.sim, 0, self.allowed)
 
     def reset(self) -> np.ndarray:
         mask = np.ones(self.num_envs, dtype=bool)
@@ -156,27 +217,37 @@ class ArenaVecEnv(VecEnv):
         self._actions = np.asarray(actions, dtype=np.int64)
 
     def step_wait(self):
-        actions = self._actions
+        actions, extra = self.interface.split(self._actions)
         self._before_step()
         opponent = self._opponent_actions()
+        if self.interface.apply is not None:
+            self.interface.apply(self.sim, 0, extra, None)
         joined = np.stack([actions, opponent], axis=1)
         events = self.sim.step(joined)
+        counts, edges = self._behaviour(actions, events)
+        self.reward_terms = {}
         reward = self._reward(events, actions)
         self._after_step()
         ko, timeout = self._terminal()
+        self.outcome_terms = {}
         bonus, outcome = self._outcome_reward(ko, timeout)
         reward = reward + bonus
+        ledger = self._ledger()
+        terms = {**self.reward_terms, **self.outcome_terms}
+        ledger.step(reward, terms, self._goal(events, outcome), counts, edges)
         self.episode_return += reward
         self.episode_length += 1
         done = ko | timeout
         infos: list[dict] = [{} for _ in range(self.num_envs)]
+        obs = self.observe()
         if done.any():
-            final = self.observe()
             finished = np.flatnonzero(done)
             self.pool.record(finished, outcome[finished] > 0)
-            for env in finished:
+            terms_of = ledger.finish(finished)
+            for env, episode_terms in zip(finished, terms_of):
                 info = infos[env]
-                info["terminal_observation"] = final[env]
+                info["reward_terms"] = episode_terms
+                info["terminal_observation"] = obs[env].copy()
                 info["TimeLimit.truncated"] = bool(timeout[env])
                 info["outcome"] = int(outcome[env])
                 info["opponent"] = self.pool.name_of(env)
@@ -192,7 +263,8 @@ class ArenaVecEnv(VecEnv):
             self._phi[done] = phi[done]
             self.episode_return[done] = 0.0
             self.episode_length[done] = 0
-        return self.observe(), reward.astype(np.float32), done, infos
+            obs[finished] = self.observe(finished)
+        return obs, reward.astype(np.float32), done, infos
 
     def win_rate(self) -> float:
         """Return the recent knockout win rate."""

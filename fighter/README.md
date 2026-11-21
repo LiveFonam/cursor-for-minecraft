@@ -51,31 +51,52 @@ nice -n 10 uv run fighter evaluate --policy runs/drill-shooting/policy.npz --dri
 
 ## Actions
 
-The policy picks one value on each of 9 discrete heads every 2 ticks.
+The policy picks one value on each of 11 discrete heads every decision, in the order the
+game client reads them.
 
 | Head | Choices |
 | --- | --- |
-| forward | back, none, forward |
-| strafe | left, none, right |
+| forward | none, forward, back |
+| strafe | none, left, right |
 | sprint | off, on |
 | jump | off, on |
-| yaw | 9 turn sizes up to 40 degrees |
-| pitch | 7 turn sizes up to 20 degrees |
-| attack | off, on |
+| yaw | 18 turn sizes from 0.25 to 180 degrees |
+| pitch | 15 turn sizes from 0.25 to 40 degrees |
+| attack | none, click, double click |
 | use | off, on (shield, bow draw, crossbow load and fire) |
-| weapon | sword, axe, bow, crossbow |
+| weapon | keep, axe, sword, crossbow, bow |
+| sneak | off, on |
+| lock aim | off, on (look at the solved shot with a bow or crossbow) |
 
-Action masks remove choices that do nothing. A swing is only legal when the aim ray meets
-the opponent hitbox within reach. Jumping is only legal on the ground. Sprinting is not
-legal while using an item. Using the shield is not legal while it is disabled.
+A positive yaw step turns left and a positive pitch step looks up.
+
+Action masks remove choices that cannot act. Sprinting is not legal while using an item.
+Jumping needs the ground or water. Bows and crossbows cannot swing. Use is blocked with a
+disabled shield, with no arrows, and until the key is released after a crossbow load.
+Weapons outside the kit are blocked. Lock aim needs a ranged weapon. Turns under 1 degree
+are blocked within 9 blocks of the enemy.
 
 ## Observations
 
-Each observation has 84 numbers in the player's own frame: its body state, the opponent's
-body and item state, the two most urgent incoming arrows, wall distances and aim errors.
-The aim errors include a computed intercept point for the held ranged weapon, so the
-shooting drill teaches the policy to act on a lead solution and does not ask it to derive
-one from raw positions.
+Each observation has 130 numbers in the player's own frame, in every profile.
+
+| Slots | Inputs |
+| --- | --- |
+| 0 to 25 | Own body, held item, charge, shield and ammunition |
+| 26 to 38 | Aim errors, distances, crosshair and sight of the enemy |
+| 39 to 60 | Enemy motion, health estimate, charge estimate, items and facing |
+| 61 to 74 | Event timers, combo, round time and the last keys pressed |
+| 75 to 80 | Lead errors and flight time for the held ranged weapon |
+| 81 to 95 | Two incoming arrows and the nearest landed arrow |
+| 96 to 121 | 26 block rays from the eye |
+| 122 to 127 | Nearest lava or fire and nearest water reached by those rays |
+| 128, 129 | World border distance and whether the client tracks the enemy |
+
+Block inputs come only from what the body has seen. An enemy behind cover is hidden, and
+its slots hold the last place it was seen.
+
+`fighter.interface.Interface` builds a larger network. Extra input blocks and action heads
+follow the shared ones, so the shared slots and heads never move.
 
 ## Training
 
@@ -101,6 +122,9 @@ shrinks in later stages.
 ## Drills
 
 Each drill trains from random weights and has a pass test on held-out seeds.
+
+A drill trains for up to 2 million decisions, scores the policy every 100,000 and stops at
+the first pass. Drills allow turn steps up to 45 degrees of yaw and 20 of pitch.
 
 Shooting. The policy stands still with a bow or crossbow while a target runs around it. To
 pass, it must hit at least 50% of its shots with each weapon and beat a scripted shooter that
