@@ -161,6 +161,8 @@ class Combat:
         self._last_xz = np.zeros((n, 2, 2))
         self.no_crit = np.zeros((n, 2), dtype=bool)
         self.in_water = np.zeros((n, 2), dtype=bool)
+        self.in_lava = np.zeros((n, 2), dtype=bool)
+        self.in_web = np.zeros((n, 2), dtype=bool)
         self.eyes_in_water = np.zeros((n, 2), dtype=bool)
         self.second_click = np.zeros((n, 2), dtype=bool)
 
@@ -263,6 +265,8 @@ class Combat:
         self._last_xz[idx] = sim.pos[idx][..., [0, 2]]
         self.no_crit[idx] = False
         self.in_water[idx] = False
+        self.in_lava[idx] = False
+        self.in_web[idx] = False
         self.eyes_in_water[idx] = False
         self.second_click[idx] = False
         self.absorption[idx] = 0.0
@@ -728,6 +732,8 @@ class Combat:
         web = contact["cobweb"]
         in_fire = contact["fire"] & ~in_water & ~in_lava
         self.in_water = in_water
+        self.in_lava = in_lava
+        self.in_web = web
         self.eyes_in_water = fluid["eye_in_water"]
         self.no_crit = in_water | web
         self.fall_distance[self.no_crit] = 0.0

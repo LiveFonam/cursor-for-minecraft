@@ -1631,8 +1631,8 @@ int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int 
     }
     int match = tool > 0 && ((TOOLS[id] >> tool) & 1);
     double speed = 1.0;
-    if (tool == TOOL_SWORD) speed = id == B_COBWEB ? 15.0 : 1.5;
-    else if (tool == TOOL_SHEARS) speed = (id == B_COBWEB || id == B_OAK_LEAVES) ? 15.0 : 2.0;
+    if (tool == TOOL_SWORD) speed = id == B_COBWEB ? 15.0 : id == B_OAK_LEAVES ? 1.5 : 1.0;
+    else if (tool == TOOL_SHEARS) speed = (id == B_COBWEB || id == B_OAK_LEAVES) ? 15.0 : 1.0;
     else if (match) speed = TIER_SPEED[tier];
     if (match && efficiency > 0) speed += efficiency * efficiency + 1;
     if (haste > 0) speed *= 1.0 + 0.2 * haste;
@@ -1648,7 +1648,7 @@ int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int 
     if (s->dig_delay > 0 && !(fresh && step >= 1.0 - 1e-9)) { s->dig_delay--; return -1; }
     int first = s->progress == 0.0;
     s->progress = hard == 0.0 ? 1.0 : s->progress + step;
-    if (s->progress < 1.0 - 1e-9) return 0;
+    if (s->progress < 1.0 - 1e-6) return 0;
     s->digging = 0;
     s->progress = 0.0;
     if (!first) s->dig_delay = DIG_DELAY;

@@ -11,12 +11,23 @@ import ctypes as ct
 import numpy as np
 
 from .blocks import AIR as _AIR
+from .blocks import BLOCKS as _BLOCKS
+from .blocks import COBWEB as _COBWEB
+from .blocks import FIRE as _FIRE
+from .blocks import LAVA as _LAVA
+from .blocks import WATER as _WATER
 from .blocks import BLOCK_ID as _BLOCK_ID
 from .kernel import Arenas as _Arenas
 from .kernel import lib as _lib
 
 UNKNOWN = 0
 AIR_CLASS = _AIR + 1
+WATER_CLASS = _WATER + 1
+LAVA_CLASS = _LAVA + 1
+COBWEB_CLASS = _COBWEB + 1
+FIRE_CLASS = _FIRE + 1
+SOLID_BY_CLASS = np.zeros(256, dtype=bool)
+SOLID_BY_CLASS[1 : len(_BLOCKS) + 1] = [_block.solid for _block in _BLOCKS]
 RAY_CLEAR = 0
 RAY_BLOCKED = 1
 RAY_UNKNOWN = 2

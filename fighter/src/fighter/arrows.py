@@ -306,7 +306,7 @@ def _strike_slot(
     speed = np.sqrt((vel * vel).sum(axis=-1))
     base = np.ceil(sim.arrow_damage[env, slot] * speed)
     extra = sim.rng.integers(0, np.floor(base / 2.0).astype(np.int64) + 2)
-    raw = base + extra * sim.arrow_crit[env, slot]
+    raw = sim.arrow_hit_damage(base + extra * sim.arrow_crit[env, slot], env, slot)
 
     yaw = np.radians(sim.yaw[env, victim])
     to_arrow = entry - sim.pos[env, victim]

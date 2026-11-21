@@ -74,7 +74,9 @@ SPLASH_DRAG = 0.99
 SPLASH_RADIUS = 4.0
 SPLASH_MIN_TICKS = 20
 
-ROD_SPEED = 1.1
+ROD_BASE_SPEED = 0.6
+ROD_EXTRA_SPEED = 0.5
+ROD_MAX_SLOPE = 5.0
 ROD_START = 0.3
 ROD_GRAVITY = 0.03
 ROD_DRAG = 0.92
@@ -82,6 +84,8 @@ ROD_PULL = 0.1
 ROD_DURABILITY = 64
 ROD_COST_PULL = 5
 ROD_COST_GROUND = 2
+HOOK_BODY_FRACTION = 0.8
+HOOK_RANGE = 33.0
 HOOK_FLYING, HOOK_STUCK, HOOK_ON_PLAYER = range(3)
 PROJECTILE_MARGIN = 0.125
 
@@ -267,6 +271,7 @@ class Items:
         if self.splash_on.any():
             self._fly_splashes()
         self.pearl_cooldown = np.maximum(self.pearl_cooldown - 1, 0)
+        hooks_up = self.hook_on.copy()
         stopped = self.input != self._prev
         if stopped.any():
             self.use_ticks[stopped] = 0
@@ -291,7 +296,7 @@ class Items:
                 self.sim.world.dig_stop(seat=int(seat), arena=int(env))
         self._digging = self.dig_input & (self.sim.world is not None)
         if self.hook_on.any():
-            self._fly_hooks()
+            self._fly_hooks(hooks_up)
         return busy
 
     def _body_order(self) -> list[tuple[int, int]]:
@@ -441,7 +446,10 @@ class Items:
         self.pearl_on[env, seat] = True
         self._live = True
         self.pearl_pos[env, seat] = self._eye(env, seat) - np.array([0.0, THROW_DROP, 0.0])
-        self.pearl_vel[env, seat] = self._look_of(env, seat) * PEARL_SPEED
+        carried = self.sim.body.last_move[env, seat].copy()
+        if self.sim.on_ground[env, seat]:
+            carried[1] = 0.0
+        self.pearl_vel[env, seat] = self._look_of(env, seat) * PEARL_SPEED + carried
 
     def _throw_splash(self, env: int, seat: int, code: int) -> None:
         if self.splash_on[env, seat]:
@@ -458,19 +466,23 @@ class Items:
         if not self.hook_on[env, seat]:
             if self.rod_left[env, seat] <= 0:
                 return
-            look = self._look_of(env, seat)
+            yaw = np.radians(float(self.sim.yaw[env, seat]))
+            pitch = np.radians(float(self.sim.pitch[env, seat]))
+            flat = np.array([-np.sin(yaw), 0.0, np.cos(yaw)])
+            aim = flat + np.array([0.0, np.clip(-np.tan(pitch), -ROD_MAX_SLOPE, ROD_MAX_SLOPE), 0.0])
             self.hook_on[env, seat] = True
             self._live = True
             self.hook_state[env, seat] = HOOK_FLYING
-            self.hook_pos[env, seat] = self._eye(env, seat) + look * ROD_START
-            self.hook_vel[env, seat] = look * ROD_SPEED
+            self.hook_pos[env, seat] = self._eye(env, seat) + flat * ROD_START
+            self.hook_vel[env, seat] = aim * (ROD_BASE_SPEED / np.linalg.norm(aim) + ROD_EXTRA_SPEED)
             return
         state = self.hook_state[env, seat]
         if state == HOOK_ON_PLAYER:
             victim = 1 - seat
             owner = self.sim.pos[env, seat]
-            target = self.sim.pos[env, victim]
-            self.sim.combat.pull(env, victim, (owner - target) * ROD_PULL)
+            hook = self.sim.pos[env, victim].copy()
+            hook[1] += HOOK_BODY_FRACTION * float(self.sim.body.heights()[env, victim])
+            self.sim.combat.pull(env, victim, (owner - hook) * ROD_PULL)
             self._spend_rod(env, seat, ROD_COST_PULL)
         elif state == HOOK_STUCK:
             self._spend_rod(env, seat, ROD_COST_GROUND)
@@ -504,7 +516,7 @@ class Items:
         direction[:, 0, 1] = -1.0
         eye[idx, 0] = start
         direction[idx, 0] = vel / length[:, None]
-        hit, _cell, _face, dist = sim.world.ray_block_many(eye, direction, float(length.max()))
+        hit, _cell, _face, dist = sim.world.ray_collide_many(eye, direction, float(length.max()))
         got = hit[idx, 0] & (dist[idx, 0] <= length)
         out[got] = dist[idx, 0][got] / length[got]
         return out
@@ -527,6 +539,7 @@ class Items:
 
     def _fly_pearls(self) -> None:
         sim = self.sim
+        self.pearl_on &= sim.hp > 0.0
         for seat in (0, 1):
             idx = np.flatnonzero(self.pearl_on[:, seat])
             if len(idx) == 0:
@@ -588,13 +601,25 @@ class Items:
             if ticks > SPLASH_MIN_TICKS:
                 combat.add_effect(env, seat, effect, amp, ticks)
 
-    def _fly_hooks(self) -> None:
+    def repeat_press(self, mask: np.ndarray, seat: int) -> None:
+        """Make a held use key press again on the next tick."""
+        self._prev[mask, seat] = NO_ITEM
+
+    def _fly_hooks(self, ready: np.ndarray | None = None) -> None:
+        """Move hooks cast before this tick. A new hook first moves on the next tick."""
+        ready = self.hook_on.copy() if ready is None else ready
+        anchor = self.hook_pos.copy()
+        on_player = self.hook_on & (self.hook_state == HOOK_ON_PLAYER)
+        anchor[on_player] = self.sim.pos[:, ::-1][on_player]
+        far = np.linalg.norm(anchor - self.sim.pos, axis=-1) > HOOK_RANGE
+        self.hook_on &= ~far
         for seat in (0, 1):
-            idx = np.flatnonzero(self.hook_on[:, seat] & (self.hook_state[:, seat] == HOOK_FLYING))
+            idx = np.flatnonzero(self.hook_on[:, seat] & ready[:, seat] & (self.hook_state[:, seat] == HOOK_FLYING))
             if len(idx) == 0:
                 continue
             start = self.hook_pos[idx, seat].copy()
             vel = self.hook_vel[idx, seat].copy()
+            vel[:, 1] -= ROD_GRAVITY
             block = self._block_time(idx, start, vel)
             body = self._body_time(idx, seat, start, vel)
             caught = np.isfinite(body) & (body <= block)
@@ -606,6 +631,4 @@ class Items:
             keep = ~done
             kept = idx[keep]
             self.hook_pos[kept, seat] = start[keep] + vel[keep]
-            moved = vel[keep] * ROD_DRAG
-            moved[:, 1] -= ROD_GRAVITY
-            self.hook_vel[kept, seat] = moved
+            self.hook_vel[kept, seat] = vel[keep] * ROD_DRAG

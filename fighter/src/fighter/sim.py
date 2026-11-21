@@ -589,6 +589,10 @@ class Sim:
     def _move(self, a: np.ndarray, using: np.ndarray) -> None:
         M.move_bodies(self, a, using)
 
+    def arrow_hit_damage(self, raw: np.ndarray, env: np.ndarray, slot: np.ndarray | int) -> np.ndarray:
+        """Return the damage of arrows that strike a player, before armor."""
+        return raw
+
     def _step_arrows(self) -> None:
         if not self.no_ranged():
             arrows.step_arrows(self)
