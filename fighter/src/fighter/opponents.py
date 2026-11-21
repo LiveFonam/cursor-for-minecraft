@@ -14,6 +14,7 @@ from .policy import NumpyPolicy
 from .sim import Sim
 
 MAX_SNAPSHOTS = 12
+RETREAT_HEALTH = 8.0
 
 
 def sample_masked(masks: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -222,6 +223,60 @@ def archer(sim, seat, rng, facts=None, rows=None):
     return a
 
 
+def retreater(sim, seat, rng, facts=None, rows=None):
+    """Fights until hurt, then runs, and turns back when caught or against the border."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    chase(a, view)
+    from_center = np.abs(sim.pos[at, seat][:, [0, 2]] - sim.origin[[0, 2]]).max(axis=1)
+    cornered = (sim.border_half - from_center < 1.5) | (view.distance < 2.0)
+    hurt = (sim.hp[at, seat] <= RETREAT_HEALTH) & ~cornered
+    run = hurt & (view.distance < 9.0)
+    wait = hurt & ~run
+    steer(
+        a,
+        np.where(run, wrap_degrees(view.yaw_error + 180.0), view.yaw_error),
+        np.where(run, -sim.pitch[at, seat], view.pitch_error),
+    )
+    a[:, A.FORWARD] = np.select([run, wait], [A.KEY_FORWARD, A.NEUTRAL_FORWARD], a[:, A.FORWARD])
+    a[:, A.SPRINT] = run | (~wait & (view.distance > 3.0))
+    a[:, A.USE] = wait & (sim.shield_disabled[at, seat] == 0)
+    a[:, A.ATTACK] = view.aim & view.charged & ~hurt
+    return a
+
+
+def hit_and_run(sim, seat, rng, facts=None, rows=None):
+    """Closes while charged, lands one hit at long reach and backs off to recharge."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    closing = view.charged & (view.distance > 2.8)
+    backing = ~view.charged & (view.distance < 5.5)
+    a[:, A.FORWARD] = np.select([closing, backing], [A.KEY_FORWARD, A.KEY_BACK], A.NEUTRAL_FORWARD)
+    a[:, A.SPRINT] = closing
+    phase = (sim.ticks[at] // 16 + seat) % 2
+    a[:, A.STRAFE] = np.where(view.charged, A.NEUTRAL_STRAFE, A.KEY_LEFT + phase)
+    a[:, A.ATTACK] = view.aim & view.charged
+    return a
+
+
+def rusher(sim, seat, rng, facts=None, rows=None):
+    """Holds at range and charges whenever the enemy draws a bow or loads a crossbow."""
+    at = _rows(rows)
+    a, view = base(sim, seat, rng, 2.0, facts, rows)
+    other = 1 - seat
+    rush = (sim.load_ticks[at, other] > 0) | (sim.draw_ticks[at, other] > 0) | (view.distance < 3.5)
+    a[:, A.FORWARD] = np.select(
+        [rush & (view.distance > 2.2), rush & (view.distance < 1.4), ~rush & (view.distance > 7.0), ~rush & (view.distance < 5.0)],
+        [A.KEY_FORWARD, A.KEY_BACK, A.KEY_FORWARD, A.KEY_BACK],
+        A.NEUTRAL_FORWARD,
+    )
+    a[:, A.SPRINT] = rush & (view.distance > 2.2)
+    phase = (sim.ticks[at] // 16 + seat) % 2
+    a[:, A.STRAFE] = np.where(rush, A.NEUTRAL_STRAFE, A.KEY_LEFT + phase)
+    a[:, A.ATTACK] = view.aim & view.charged
+    return a
+
+
 SCRIPTED = {
     "idle": idle,
     "random": random_player,
@@ -232,6 +287,9 @@ SCRIPTED = {
     "shielder": shielder,
     "axeman": axeman,
     "archer": archer,
+    "retreater": retreater,
+    "hit_and_run": hit_and_run,
+    "rusher": rusher,
 }
 
 LEAGUE = "league"

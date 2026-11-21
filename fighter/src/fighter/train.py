@@ -51,7 +51,17 @@ CURRICULUM = [
     ),
     Stage(
         "league",
-        {LEAGUE: 3.0, "strafer": 0.5, "critter": 0.5, "shielder": 0.5, "axeman": 0.5, "archer": 0.5},
+        {
+            LEAGUE: 3.0,
+            "strafer": 0.5,
+            "critter": 0.5,
+            "shielder": 0.5,
+            "axeman": 0.5,
+            "archer": 0.5,
+            "retreater": 0.5,
+            "hit_and_run": 0.5,
+            "rusher": 0.5,
+        },
         2.0,
         0,
         0.4,

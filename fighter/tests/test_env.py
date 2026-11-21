@@ -130,6 +130,53 @@ def test_swinger_damages_idle_player():
     assert (sim.hp[:, 0] < C.MAX_HEALTH).all()
 
 
+def still_target(sim):
+    return A.neutral_actions(sim.weapon[:, 0].copy())
+
+
+def gap(sim):
+    return np.hypot(*(sim.pos[0, 1] - sim.pos[0, 0])[[0, 2]])
+
+
+def placed_duel(distance):
+    sim = Sim(1, SimConfig(armor="none"), seed=4)
+    sim.pos[0, 0] = [0.0, 0.0, -distance / 2.0]
+    sim.pos[0, 1] = [0.0, 0.0, distance / 2.0]
+    return sim, np.random.default_rng(4)
+
+
+def test_retreater_runs_only_when_hurt():
+    gaps = {}
+    for health in (C.MAX_HEALTH, 6.0):
+        sim, rng = placed_duel(4.0)
+        sim.hp[0, 1] = health
+        for _ in range(20):
+            sim.step(np.stack([still_target(sim), SCRIPTED["retreater"](sim, 1, rng)], axis=1))
+        gaps[health] = gap(sim)
+    assert gaps[C.MAX_HEALTH] < 3.0
+    assert gaps[6.0] > 7.0
+
+
+def test_hit_and_run_backs_off_after_landing_a_hit():
+    sim, rng = placed_duel(5.0)
+    widest_after_hit = 0.0
+    for _ in range(40):
+        sim.step(np.stack([still_target(sim), SCRIPTED["hit_and_run"](sim, 1, rng)], axis=1))
+        if sim.hp[0, 0] < C.MAX_HEALTH:
+            widest_after_hit = max(widest_after_hit, gap(sim))
+    assert sim.hp[0, 0] < C.MAX_HEALTH
+    assert widest_after_hit > 3.5
+
+
+@pytest.mark.parametrize(("loading", "closes"), [(False, False), (True, True)])
+def test_rusher_charges_only_while_the_enemy_loads(loading, closes):
+    sim, rng = placed_duel(6.5)
+    for _ in range(25):
+        sim.load_ticks[0, 0] = 5 if loading else 0
+        sim.step(np.stack([still_target(sim), SCRIPTED["rusher"](sim, 1, rng)], axis=1))
+    assert (gap(sim) < 3.0) == closes
+
+
 def test_intercept_aim_hits_a_moving_target():
     hits = 0
     for seed in range(20):
