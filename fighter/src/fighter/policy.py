@@ -13,8 +13,10 @@ from .obs import OBS_DIM
 class NumpyPolicy:
     """A ReLU multilayer perceptron with one categorical output per head."""
 
-    def __init__(self, layers: list[tuple[np.ndarray, np.ndarray]]):
+    def __init__(self, layers: list[tuple[np.ndarray, np.ndarray]], nvec: np.ndarray | None = None):
         self.layers = layers
+        self.nvec = A.NVEC if nvec is None else np.asarray(nvec, dtype=np.int64)
+        self.offsets = np.concatenate([[0], np.cumsum(self.nvec)[:-1]]).astype(np.int64)
 
     @classmethod
     def from_sb3(cls, model) -> "NumpyPolicy":
@@ -25,22 +27,25 @@ class NumpyPolicy:
             (m.weight.detach().cpu().numpy().copy(), m.bias.detach().cpu().numpy().copy())
             for m in modules
         ]
-        return cls(layers)
+        return cls(layers, np.asarray(model.action_space.nvec))
 
     @classmethod
-    def random(cls, seed: int = 0, hidden: int = 256) -> "NumpyPolicy":
+    def random(
+        cls, seed: int = 0, hidden: int = 256, obs_dim: int = OBS_DIM, nvec: np.ndarray | None = None
+    ) -> "NumpyPolicy":
         """Build an untrained policy with random weights."""
         rng = np.random.default_rng(seed)
-        sizes = [OBS_DIM, hidden, hidden, A.MASK_SIZE]
+        heads = A.NVEC if nvec is None else np.asarray(nvec, dtype=np.int64)
+        sizes = [obs_dim, hidden, hidden, int(heads.sum())]
         layers = []
         for fan_in, fan_out in zip(sizes[:-1], sizes[1:]):
             weight = rng.normal(0.0, 1.0 / np.sqrt(fan_in), size=(fan_out, fan_in)).astype(np.float32)
             layers.append((weight, np.zeros(fan_out, dtype=np.float32)))
-        return cls(layers)
+        return cls(layers, heads)
 
     def save(self, path: str | Path) -> None:
         """Write the weights to an npz file."""
-        arrays = {}
+        arrays = {"nvec": self.nvec}
         for i, (weight, bias) in enumerate(self.layers):
             arrays[f"w{i}"] = weight
             arrays[f"b{i}"] = bias
@@ -50,8 +55,9 @@ class NumpyPolicy:
     def load(cls, path: str | Path) -> "NumpyPolicy":
         """Read weights from an npz file."""
         with np.load(path) as data:
-            count = len(data.files) // 2
-            return cls([(data[f"w{i}"], data[f"b{i}"]) for i in range(count)])
+            count = sum(name.startswith("w") for name in data.files)
+            nvec = data["nvec"] if "nvec" in data.files else None
+            return cls([(data[f"w{i}"], data[f"b{i}"]) for i in range(count)], nvec)
 
     def logits(self, obs: np.ndarray) -> np.ndarray:
         """Return the flat action logits."""
@@ -72,7 +78,7 @@ class NumpyPolicy:
         logits = np.where(masks, self.logits(obs), -np.inf)
         if not deterministic:
             logits = logits + rng.gumbel(size=logits.shape)
-        out = np.zeros((len(obs), len(A.NVEC)), dtype=np.int64)
-        for head, (start, size) in enumerate(zip(A.HEAD_OFFSETS, A.NVEC)):
+        out = np.zeros((len(obs), len(self.nvec)), dtype=np.int64)
+        for head, (start, size) in enumerate(zip(self.offsets, self.nvec)):
             out[:, head] = logits[:, start : start + size].argmax(axis=1)
         return out

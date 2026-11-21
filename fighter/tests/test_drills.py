@@ -21,8 +21,8 @@ def test_shooting_masks_lock_movement_and_weapon():
     start = A.HEAD_OFFSETS[A.FORWARD]
     assert masks[:, start : start + 3].sum(axis=1).tolist() == [1] * 8
     weapon = A.HEAD_OFFSETS[A.WEAPON]
-    assert masks[:, weapon + C.CROSSBOW].all()
-    assert masks[:, weapon : weapon + C.NUM_WEAPONS].sum(axis=1).tolist() == [1] * 8
+    assert masks[:, weapon + A.WEAPON_ACTION[C.CROSSBOW]].all()
+    assert masks[:, weapon : weapon + A.NVEC[A.WEAPON]].sum(axis=1).tolist() == [1] * 8
 
 
 def test_target_moves_during_shooting_drill():

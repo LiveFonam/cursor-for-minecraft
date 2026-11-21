@@ -33,10 +33,10 @@ def test_observation_is_egocentric():
     sim.yaw[0] = [0.0, 0.0]
     sim.yaw[1] = [90.0, 0.0]
     obs = build_obs(sim, 0, 600)
-    assert obs[0, 22] > 0.0
-    assert obs[0, 23] == pytest.approx(0.0, abs=1e-6)
-    assert obs[1, 22] == pytest.approx(0.0, abs=1e-6)
-    assert obs[1, 23] != pytest.approx(0.0, abs=1e-3)
+    assert obs[0, 26] == pytest.approx(0.0, abs=1e-6)
+    assert obs[0, 27] == pytest.approx(1.0, abs=1e-6)
+    assert obs[1, 26] == pytest.approx(1.0, abs=1e-3)
+    assert obs[1, 27] == pytest.approx(0.0, abs=1e-3)
 
 
 def test_observation_shows_crossbow_needs_a_release():
@@ -48,25 +48,29 @@ def test_observation_shows_crossbow_needs_a_release():
     sim._tick(held, first=True)
     assert sim.events["arrows_fired"][0, 0] == 1
     obs = build_obs(sim, 0, 600)
-    assert obs[0, 82] == 1.0
-    assert obs[0, 83] == 1.0
+    use = A.HEAD_OFFSETS[A.USE] + 1
+    assert obs[0, 74] == 1.0
+    assert obs[0, 22] == 0.0
+    assert not build_masks(sim, 0)[0, use]
     released = A.neutral_actions(sim.weapon.copy())
     sim._tick(released, first=True)
     obs = build_obs(sim, 0, 600)
-    assert obs[0, 82] == 0.0
-    assert obs[0, 83] == 0.0
+    assert obs[0, 74] == 0.0
+    assert build_masks(sim, 0)[0, use]
 
 
-def test_attack_is_masked_until_aim_meets_hitbox():
+def test_melee_can_swing_early_and_ranged_weapons_cannot_swing():
     sim = Sim(1, SimConfig(), seed=0)
     sim.pos[0, 0] = [0.0, 0.0, 0.0]
     sim.pos[0, 1] = [0.0, 0.0, 2.0]
     sim.yaw[0] = [90.0, 180.0]
-    attack = A.HEAD_OFFSETS[A.ATTACK] + 1
-    assert not build_masks(sim, 0)[0, attack]
-    sim.yaw[0, 0] = 0.0
-    sim.pitch[0, 0] = 20.0
-    assert build_masks(sim, 0)[0, attack]
+    click = A.HEAD_OFFSETS[A.ATTACK] + A.ATTACK_CLICK
+    double = A.HEAD_OFFSETS[A.ATTACK] + A.ATTACK_DOUBLE
+    assert not sim.aim_hits()[0, 0]
+    assert build_masks(sim, 0)[0, click] and build_masks(sim, 0)[0, double]
+    for weapon in (C.BOW, C.CROSSBOW):
+        sim.weapon[0, 0] = weapon
+        assert not build_masks(sim, 0)[0, click] and not build_masks(sim, 0)[0, double]
 
 
 def test_jump_is_masked_in_the_air():
@@ -139,9 +143,9 @@ def test_intercept_aim_hits_a_moving_target():
         sim.yaw[0, 0] = yaw[0]
         sim.pitch[0, 0] = pitch[0]
         walking = A.neutral_actions(sim.weapon.copy())
-        walking[0, 0, A.WEAPON] = C.BOW
+        walking[0, 0, A.WEAPON] = A.WEAPON_ACTION[C.BOW]
         sim.yaw[0, 1] = -90.0
-        walking[0, 1, A.FORWARD] = 2
+        walking[0, 1, A.FORWARD] = A.KEY_FORWARD
         for _ in range(12):
             sim._tick(walking, first=True)
         hits += sim.hp[0, 1] < C.MAX_HEALTH

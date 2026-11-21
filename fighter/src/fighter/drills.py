@@ -20,6 +20,7 @@ from .sim import SimConfig
 from .train import TrainConfig, build_model, limit_threads, peak_rss_gb
 
 DRILL_TICKS = 300
+DRILL_ARROWS = 10_000
 SHOOT_PASS_RATE = 0.50
 SHOOT_LEAD_MARGIN = 0.10
 BLOCK_PASS_RATE = 0.85
@@ -43,6 +44,8 @@ class DrillEnv(ArenaVecEnv):
             start = A.HEAD_OFFSETS[head]
             mask[:, start : start + A.NVEC[head]] = False
             mask[:, start + keep] = True
+        single = self.allowed.sum(axis=1) == 1
+        mask[single, A.HEAD_OFFSETS[A.WEAPON] + A.WEAPON_KEEP] = False
         return mask
 
     def _terminal(self):
@@ -67,13 +70,21 @@ class ShootingDrill(DrillEnv):
         (A.SPRINT, 0),
         (A.JUMP, 0),
         (A.ATTACK, 0),
+        (A.SNEAK, 0),
+        (A.LOCK_AIM, 0),
     )
 
     def __init__(self, n_envs: int, seed: int = 0, weapons: tuple[int, ...] = (C.BOW, C.CROSSBOW)):
         self.weapons = np.array(weapons)
         self.side = np.ones(n_envs)
         self.runs = np.zeros(n_envs, dtype=bool)
-        config = SimConfig(armor="none", spawn_min=7.0, spawn_max=14.0, face_noise_deg=25.0)
+        config = SimConfig(
+            armor="none",
+            spawn_min=7.0,
+            spawn_max=14.0,
+            face_noise_deg=25.0,
+            start_arrows=DRILL_ARROWS,
+        )
         super().__init__(n_envs, config, seed)
         self._on_reset(np.ones(n_envs, dtype=bool))
         self._phi = self._potential()
@@ -126,7 +137,7 @@ class ShootingDrill(DrillEnv):
         to_center = np.degrees(np.arctan2(sim.pos[:, 1, 0], -sim.pos[:, 1, 2]))
         sim.yaw[:, 1] = np.where(near_wall, to_center, heading)
         a = A.neutral_actions(np.full(self.num_envs, C.SWORD))
-        a[:, A.FORWARD] = 2
+        a[:, A.FORWARD] = A.KEY_FORWARD
         a[:, A.SPRINT] = self.runs
         return a
 
@@ -157,12 +168,20 @@ class BlockingDrill(DrillEnv):
         (A.SPRINT, 0),
         (A.JUMP, 0),
         (A.ATTACK, 0),
+        (A.SNEAK, 0),
+        (A.LOCK_AIM, 0),
     )
 
     def __init__(self, n_envs: int, seed: int = 0):
         self.hold_for = np.full(n_envs, C.BOW_FULL_DRAW_TICKS, dtype=np.int64)
         self.rest = np.zeros(n_envs, dtype=np.int64)
-        config = SimConfig(armor="none", spawn_min=8.0, spawn_max=15.0, face_noise_deg=45.0)
+        config = SimConfig(
+            armor="none",
+            spawn_min=8.0,
+            spawn_max=15.0,
+            face_noise_deg=45.0,
+            start_arrows=DRILL_ARROWS,
+        )
         super().__init__(n_envs, config, seed)
         self.allowed[:] = False
         self.allowed[:, C.SWORD] = True

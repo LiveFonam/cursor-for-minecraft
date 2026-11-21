@@ -11,7 +11,9 @@ from stable_baselines3.common.vec_env import VecEnv
 
 from . import actions as A
 from . import constants as C
-from .obs import OBS_DIM, build_masks, build_obs, view_angles, wrap_degrees
+from .combat import RoundRules, round_timeout
+from .interface import SHARED, Interface
+from .obs import view_angles, wrap_degrees
 from .opponents import OpponentPool
 from .sim import Sim, SimConfig
 
@@ -50,16 +52,20 @@ class ArenaVecEnv(VecEnv):
         reward: RewardConfig | None = None,
         max_ticks: int = 600,
         seed: int = 0,
+        round_rules: RoundRules | None = None,
+        interface: Interface | None = None,
     ):
-        observation_space = gym.spaces.Box(-5.0, 5.0, shape=(OBS_DIM,), dtype=np.float32)
-        action_space = gym.spaces.MultiDiscrete(A.NVEC)
+        self.interface = interface or SHARED
+        observation_space = gym.spaces.Box(-5.0, 5.0, shape=(self.interface.obs_dim,), dtype=np.float32)
+        action_space = gym.spaces.MultiDiscrete(self.interface.nvec)
         super().__init__(n_envs, observation_space, action_space)
         self.sim = Sim(n_envs, sim_config, seed=seed)
         self.pool = pool
         self.reward_cfg = reward or RewardConfig()
         self.max_ticks = max_ticks
+        self.round_rules = round_rules
         self.allowed = np.ones((n_envs, C.NUM_WEAPONS), dtype=bool)
-        self._actions = np.zeros((n_envs, len(A.NVEC)), dtype=np.int64)
+        self._actions = np.zeros((n_envs, len(self.interface.nvec)), dtype=np.int64)
         self.episode_return = np.zeros(n_envs)
         self.episode_length = np.zeros(n_envs, dtype=np.int64)
         self.results: deque[tuple[str, int]] = deque(maxlen=400)
@@ -112,7 +118,12 @@ class ArenaVecEnv(VecEnv):
     def _terminal(self) -> tuple[np.ndarray, np.ndarray]:
         hp = self.sim.hp
         ko = (hp[:, 0] <= 0.0) | (hp[:, 1] <= 0.0)
-        timeout = self.sim.ticks >= self.max_ticks
+        if self.round_rules is None:
+            timeout = self.sim.ticks >= self.max_ticks
+        else:
+            timeout = round_timeout(self.round_rules, self.sim.ticks, self.sim.combat.last_hit_tick, hp)
+        if self.sim.world is not None:
+            timeout = timeout | self.sim.world.overflowed()
         return ko, timeout & ~ko
 
     def _outcome_reward(self, ko: np.ndarray, timeout: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -135,13 +146,13 @@ class ArenaVecEnv(VecEnv):
     def _after_step(self) -> None:
         return None
 
-    def observe(self) -> np.ndarray:
-        """Return the learner observation."""
-        return np.clip(build_obs(self.sim, 0, self.max_ticks), -5.0, 5.0)
+    def observe(self, rows: np.ndarray | None = None) -> np.ndarray:
+        """Return the learner observation of all or the selected arenas."""
+        return np.clip(self.interface.observe(self.sim, 0, self.max_ticks, rows), -5.0, 5.0)
 
     def action_masks(self) -> np.ndarray:
         """Return the learner action masks."""
-        return build_masks(self.sim, 0, self.allowed)
+        return self.interface.masks(self.sim, 0, self.allowed)
 
     def reset(self) -> np.ndarray:
         mask = np.ones(self.num_envs, dtype=bool)
@@ -156,9 +167,11 @@ class ArenaVecEnv(VecEnv):
         self._actions = np.asarray(actions, dtype=np.int64)
 
     def step_wait(self):
-        actions = self._actions
+        actions, extra = self.interface.split(self._actions)
         self._before_step()
         opponent = self._opponent_actions()
+        if self.interface.apply is not None:
+            self.interface.apply(self.sim, 0, extra, None)
         joined = np.stack([actions, opponent], axis=1)
         events = self.sim.step(joined)
         reward = self._reward(events, actions)
@@ -170,13 +183,13 @@ class ArenaVecEnv(VecEnv):
         self.episode_length += 1
         done = ko | timeout
         infos: list[dict] = [{} for _ in range(self.num_envs)]
+        obs = self.observe()
         if done.any():
-            final = self.observe()
             finished = np.flatnonzero(done)
             self.pool.record(finished, outcome[finished] > 0)
             for env in finished:
                 info = infos[env]
-                info["terminal_observation"] = final[env]
+                info["terminal_observation"] = obs[env].copy()
                 info["TimeLimit.truncated"] = bool(timeout[env])
                 info["outcome"] = int(outcome[env])
                 info["opponent"] = self.pool.name_of(env)
@@ -192,7 +205,8 @@ class ArenaVecEnv(VecEnv):
             self._phi[done] = phi[done]
             self.episode_return[done] = 0.0
             self.episode_length[done] = 0
-        return self.observe(), reward.astype(np.float32), done, infos
+            obs[finished] = self.observe(finished)
+        return obs, reward.astype(np.float32), done, infos
 
     def win_rate(self) -> float:
         """Return the recent knockout win rate."""
