@@ -1,0 +1,29 @@
+# The hostile mob director. /director reload reads this again.
+
+# mobs it steers at once, and how many it may spawn per encounter (out of the player's sight, outside their shelter)
+max-active: 4
+max-reinforcements: 2
+# seconds between two reinforcement spawns
+spawn-gap-seconds: 8
+# hostile mobs this close to the player join first
+recruit-radius: 32
+
+# a player whose walkable space stays within this many blocks is shut in
+shelter-radius: 12
+# a wall or roof a creeper may try: at most this thick, every block at most this blast resistant
+# (cobblestone and stone 6, planks and gates 3, dirt 0.5, obsidian 1200)
+breach-max-thickness: 2
+breach-max-blast: 6.0
+# after a failed breach (creeper killed, blast left no way in, creeper stuck)
+failed-breach-cooldown-seconds: 30
+# a creeper that has not reached its spot by then gives up
+breach-timeout-seconds: 45
+# extra path range for directed mobs, so a creeper further than its usual 16 blocks can plan the walk
+extra-follow-range: 24
+
+# The demo arena (director/scripts/live-test.js builds it): its gate and one wall block get tried first.
+# Whether they can be breached is always read from the blocks there now.
+arena:
+  name: demo
+  gate: [0, -60, -4]
+  wall: [4, -60, 0]
