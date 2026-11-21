@@ -11,6 +11,10 @@ FEATURE_FLUIDS = 1
 FEATURE_FIRE = 2
 FEATURE_DEPTH = 4
 FEATURE_TREES = 8
+FEATURE_RANDOM_TICKS = 16
+
+# The flags that change the generated terrain, and so name a cached world.
+TERRAIN_FEATURES = FEATURE_FLUIDS | FEATURE_FIRE | FEATURE_DEPTH | FEATURE_TREES
 
 BAND_BELOW = 8
 BAND_ABOVE = 40
@@ -24,12 +28,14 @@ class WorldConfig:
     fire: fire blocks and their ticks.
     depth: caves, ores, deepslate and everything below the surface band.
     trees: the light forest.
+    random_ticks: leaf decay, grass spread and lava lighting fires.
     """
 
     fluids: bool = True
     fire: bool = True
     depth: bool = True
     trees: bool = True
+    random_ticks: bool = True
 
     @property
     def features(self) -> int:
@@ -39,6 +45,7 @@ class WorldConfig:
             | FEATURE_FIRE * self.fire
             | FEATURE_DEPTH * self.depth
             | FEATURE_TREES * self.trees
+            | FEATURE_RANDOM_TICKS * self.random_ticks
         )
 
 

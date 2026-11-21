@@ -342,6 +342,24 @@ def test_block_inputs_ignore_a_block_the_body_has_not_seen():
     assert results[0] == results[1]
 
 
+def test_block_inputs_report_a_block_once_it_is_seen():
+    plain = flat_raw()
+    changed = flat_raw()
+    changed[14:19, 2, yi(FLOOR) + 1 : yi(FLOOR) + 5] = B.STONE
+    results = []
+    for raw in (plain, changed):
+        sim = Sim(1, SimConfig(armor="none", arena_half=64.0))
+        sim.attach_world(make(raw))
+        sim.pos[0, 0] = [16.5, Y, 8.5]
+        sim.pos[0, 1] = [16.5, Y, 13.5]
+        sim.yaw[0] = [180.0, 180.0]
+        for _ in range(4):
+            sim.update_sight()
+        results.append(build_obs(sim, 0, 600)[0, 96:128].tobytes())
+        sim.close()
+    assert results[0] != results[1]
+
+
 def _hidden_cells(cells_array):
     ids = cells_array & 0xFF
     opaque = np.array([b.opaque for b in B.BLOCKS] + [True] * (256 - len(B.BLOCKS)))[ids]

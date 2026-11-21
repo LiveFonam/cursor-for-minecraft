@@ -465,7 +465,7 @@ def test_sneak_slowdown_starts_one_tick_after_the_key():
     assert held.vel[0, 0, 2] < free.vel[0, 0, 2]
 
 
-def test_the_lift_off_rule_applies_only_to_the_flat_arena():
+def test_the_lift_off_rule_applies_on_flat_ground_and_in_a_world():
     flat = Sim(1, SimConfig(armor="none"))
     flat.combat._lift_pending[0, 0] = True
     flat.combat._server_tick(np.zeros((1, 2), dtype=bool))
@@ -474,7 +474,7 @@ def test_the_lift_off_rule_applies_only_to_the_flat_arena():
     world.attach_world(make(flat_raw()))
     world.combat._lift_pending[0, 0] = True
     world.combat._server_tick(np.zeros((1, 2), dtype=bool))
-    assert world.combat.server_vel[0, 0, 1] != pytest.approx(0.42)
+    assert world.combat.server_vel[0, 0, 1] == pytest.approx(0.42)
     world.close()
 
 

@@ -203,7 +203,6 @@ def test_placing_and_digging_go_through_the_world():
 def test_collected_cobblestone_refills_the_block_stack():
     sim = block_sim()
     sim.world.spawn_item(16.5, Y + 0.2, 16.5, B.ITEM_ID["cobblestone"], 3, delay=0)
-    sim.items._touched[0] = True
     sim.step(idle(sim))
     assert sim.items.count[0, 0, I.BLOCK] == 3
     sim.close()

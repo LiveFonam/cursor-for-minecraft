@@ -102,7 +102,7 @@ replays real server recordings stored in `tests/data/recorded_combat.json`.
 | Knockback push | x and z halve, then add strength along the push. On the ground y becomes min(0.4, y / 2 + strength) |
 | Melee knockback | 0.4 from attacker to victim, then a push along the attacker view of 0.5 for a sprint hit plus the Knockback enchantment strength |
 | Server velocity | Each player has a server copy that knockback starts from. A player hit restores it afterward |
-| Server copy lift-off | In `arena` with the vanilla client, a key jump from standing reaches the copy 2 ticks later, and a knockback lift or a jump right after landing reaches it after 1 tick. The copy takes 0.42 with no gravity step on that tick. `surface` and `full` apply a jump to the copy on its own tick |
+| Server copy lift-off | With the vanilla client on every profile, a key jump from standing reaches the copy 2 ticks later, and a knockback lift or a jump right after landing reaches it after 1 tick. The copy takes 0.42 with no gravity step on that tick. It lands when the previous client height plus its vertical speed reaches the ground, which `surface` and `full` find with a downward collision query |
 | Sprint and items | On the vanilla client a running sprint continues through item use, and item use blocks a new sprint start |
 | Sprint in water | Starting a sprint needs the eye under water on the previous tick. A swimmer keeps sprinting against a wall and its vertical speed is pulled toward its look |
 | Crossbow reload | After a shot, loading can start 4 ticks later, with the key held or pressed again |
@@ -126,11 +126,28 @@ replays real server recordings stored in `tests/data/recorded_combat.json`.
 Item use goes through `Sim.items.input`, an array of item codes that defaults to no item.
 Items that change blocks call the world API and do nothing when the simulator has no world.
 
+## World rules
+
+| Rule | Value |
+| --- | --- |
+| Random ticks | 3 per 16 block cube section each game tick, only in sections holding leaves, grass or lava. `WorldConfig.random_ticks` turns them off |
+| Leaf decay | Natural leaves more than 6 steps through leaves from a log are removed on a random tick and roll their drops. Placed leaves stay |
+| Grass | Turns to dirt under an opaque block, a full bottom face or full water. Spreads to dirt 1 sideways, 3 down to 1 up, when that dirt has open sky. Open sky stands in for light, which is not modeled |
+| Lava and fire | On a random tick, lava lights air beside a flammable block up to 2 layers up, or the top of a flammable block beside it. The chances follow the wiki description and are not measured |
+| Stacks | 64 items in a stack, 36 stacks carried of one kind. What does not fit stays on the ground |
+| Item merging | Every 40 ticks of an item's age, items of one kind within 0.5 sideways and 0.25 up or down join, up to 64 |
+| Items and heat | An item in a fire block lasts 5 ticks. Lava removes it at once |
+| Falling blocks | Wait 2 ticks, ignore fluids, and become an item after 600 ticks, or 100 at the bottom layer |
+| Fortune | Ores multiply by 1 plus a bonus. Redstone adds up to the level. Gravel and leaves use the wiki chance tables |
+| Silk Touch and shears | Silk Touch drops the block itself. Shears keep leaves and cobwebs. Neither gives experience |
+| Experience | Coal 0 to 2, redstone 1 to 5, lapis 2 to 5, diamond 3 to 7. Raw metal ores give none |
+| Held tools | `Items.give_tool` holds a tool that digs in place of the weapon until it breaks. A held axe cuts at its own tier |
+
 ## Tick order
 
 Each tick runs these steps.
 
-1. Run the world when there is one: block ticks, fluid ticks, random ticks, then falling blocks and items.
+1. Run the world when there is one: block ticks, fluid ticks, random ticks, then falling blocks and items. Inside each queue, ticks run in the order they were scheduled.
 2. Rotate the view.
 3. Switch weapons. A switch resets the attack cooldown and cancels item use.
 4. Update shields, bow draw and crossbow loading. Fire arrows.
@@ -160,4 +177,4 @@ Each tick runs these steps.
 
 ## Not modeled
 
-Sweep attacks, and the Resistance, Slowness, Weakness and Harming effects. Digging and held items are simulator inputs that default to off, because the shared action heads have no choice for them.
+Sweep attacks, light levels, and the Resistance, Slowness, Weakness and Harming effects. Digging and held items are simulator inputs that default to off, because the shared action heads have no choice for them.

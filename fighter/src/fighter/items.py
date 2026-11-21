@@ -187,6 +187,28 @@ def kit_named(name: str | Kit | None, armor: str) -> Kit:
     return KITS[name]
 
 
+class HeldTools:
+    """Mining tools and effects of each body, made the first time a tool is given."""
+
+    def __init__(self, n: int) -> None:
+        shape = (n, 2)
+        self.kind = np.zeros(shape, dtype=np.int8)
+        self.tier = np.zeros(shape, dtype=np.int8)
+        self.left = np.zeros(shape, dtype=np.int32)
+        self.efficiency = np.zeros(shape, dtype=np.int8)
+        self.unbreaking = np.zeros(shape, dtype=np.int8)
+        self.fortune = np.zeros(shape, dtype=np.int8)
+        self.silk = np.zeros(shape, dtype=bool)
+        self.haste = np.zeros(shape, dtype=np.int8)
+        self.fatigue = np.zeros(shape, dtype=np.int8)
+        self.aqua = np.zeros(shape, dtype=bool)
+
+    def clear(self, idx: np.ndarray) -> None:
+        """Empty the selected arenas."""
+        for values in vars(self).values():
+            values[idx] = 0
+
+
 def _look(yaw: float, pitch: float) -> np.ndarray:
     y = np.radians(yaw)
     p = np.radians(pitch)
@@ -195,6 +217,9 @@ def _look(yaw: float, pitch: float) -> np.ndarray:
 
 class Items:
     """Held item input, inventories and thrown objects for a batch of arenas."""
+
+    # A class default, so a saved environment state without tools loads unchanged.
+    tools: HeldTools | None = None
 
     def __init__(self, sim) -> None:
         n = sim.n
@@ -222,7 +247,6 @@ class Items:
         self._live = False
         self._idle = np.zeros((n, 2), dtype=bool)
         self._digging = np.zeros((n, 2), dtype=bool)
-        self._touched = np.zeros(n, dtype=bool)
         self.picked = None
 
     def reset(self, idx: np.ndarray, kit_ids: np.ndarray, kits: list[Kit]) -> None:
@@ -239,9 +263,10 @@ class Items:
         self.rod_left[idx] = 0
         self.ground_on[idx] = False
         self._digging[idx] = False
-        self._touched[idx] = False
         if self.picked is not None:
             self.picked[idx] = 0
+        if self.tools is not None:
+            self.tools.clear(idx)
         if not any(kit.stock or kit.ground_axe for kit in kits):
             return
         for env, row in zip(idx, kit_ids[idx]):
@@ -316,24 +341,25 @@ class Items:
         """Move dropped items in reach of each body into its inventory."""
         from .world import blocks as B
 
-        if not self._touched.any():
-            return
         sim = self.sim
+        heights = sim.body.heights()
+        ready = sim.world.pickup_ready(sim.pos, np.full((sim.n, 2), C.PLAYER_WIDTH), heights) & (sim.hp > 0.0)
+        if not ready.any():
+            return
         if self.picked is None:
             self.picked = np.zeros((sim.n, 2, B.FIRST_ITEM + len(B.ITEMS)), dtype=np.int32)
         codes = {B.ITEM_ID["cobblestone"]: BLOCK, B.ITEM_ID["cobweb"]: COBWEB}
-        heights = sim.body.heights()
-        for env in np.flatnonzero(self._touched).tolist():
-            if len(sim.world.items(env)) == 0:
-                continue
-            for seat in (0, 1):
-                if sim.hp[env, seat] <= 0.0:
-                    continue
-                found = sim.world.pickup(sim.pos[env, seat], C.PLAYER_WIDTH, float(heights[env, seat]), env)
-                for item, amount in found:
-                    self.picked[env, seat, item] += amount
-                    if item in codes:
-                        self.count[env, seat, codes[item]] += amount
+        room = np.empty(256, dtype=np.int32)
+        for env, seat in zip(*(where.tolist() for where in np.nonzero(ready))):
+            room[:] = B.MAX_CARRY
+            room[: self.picked.shape[2]] -= self.picked[env, seat]
+            for item, code in codes.items():
+                room[item] = B.MAX_CARRY - self.count[env, seat, code]
+            found = sim.world.pickup(sim.pos[env, seat], C.PLAYER_WIDTH, float(heights[env, seat]), env, room)
+            for item, amount in found:
+                self.picked[env, seat, item] += amount
+                if item in codes:
+                    self.count[env, seat, codes[item]] += amount
 
     def _flying(self) -> bool:
         if not self._live:
@@ -394,7 +420,6 @@ class Items:
         from .world import blocks as B
 
         world = self.sim.world
-        self._touched[env] = True
         eye = self._eye(env, seat)
         look = self._look_of(env, seat)
         if code in (WATER_BUCKET, LAVA_BUCKET):
@@ -416,27 +441,109 @@ class Items:
             if placed == 1:
                 self.count[env, seat, code] -= 1
 
+    def give_tool(
+        self,
+        env: int,
+        seat: int,
+        kind: int,
+        tier: int,
+        efficiency: int = 0,
+        unbreaking: int = 0,
+        fortune: int = 0,
+        silk: bool = False,
+    ) -> None:
+        """Put a mining tool in a body's hand. It digs in place of the weapon until it breaks."""
+        from .world import blocks as B
+
+        if self.tools is None:
+            self.tools = HeldTools(self.sim.n)
+        tools = self.tools
+        tools.kind[env, seat] = kind
+        tools.tier[env, seat] = tier
+        tools.left[env, seat] = B.TIER_DURABILITY[tier]
+        tools.efficiency[env, seat] = efficiency
+        tools.unbreaking[env, seat] = unbreaking
+        tools.fortune[env, seat] = fortune
+        tools.silk[env, seat] = silk
+
+    def set_mining_effects(
+        self, env: int, seat: int, haste: int = 0, fatigue: int = 0, aqua: bool = False
+    ) -> None:
+        """Set the Haste and Mining Fatigue levels and Aqua Affinity of one body."""
+        if self.tools is None:
+            self.tools = HeldTools(self.sim.n)
+        self.tools.haste[env, seat] = haste
+        self.tools.fatigue[env, seat] = fatigue
+        self.tools.aqua[env, seat] = aqua
+
+    def experience(self, env: int, seat: int) -> int:
+        """Return the experience a body has earned from mining this round."""
+        return 0 if self.sim.world is None else self.sim.world.experience(seat, env)
+
+    def _axe_tier(self, env: int, seat: int) -> int:
+        from .world import blocks as B
+
+        tiers = {
+            "wooden": B.TIER_WOOD, "stone": B.TIER_STONE, "iron": B.TIER_IRON,
+            "diamond": B.TIER_DIAMOND, "netherite": B.TIER_NETHERITE,
+        }
+        combat = self.sim.combat
+        material = combat.kits[int(combat.kit_id[env, seat])].axe
+        return tiers[self.ground_material[int(env)] if material == "none" else material]
+
     def _dig(self, env: int, seat: int) -> None:
         from .world import blocks as B
 
         sim = self.sim
         if sim.world is None:
             return
-        self._touched[env] = True
-        holds_sword = sim.weapon[env, seat] == C.SWORD and sim.combat.weapon_left[env, seat, C.SWORD] > 0
-        level = int(sim.combat._t_unbreaking[sim.combat.kit_id[env, seat]])
+        combat = sim.combat
+        tools = self.tools
+        held = tools is not None and tools.left[env, seat] > 0
+        holds_sword = not held and sim.weapon[env, seat] == C.SWORD and combat.weapon_left[env, seat, C.SWORD] > 0
+        holds_axe = not held and sim.weapon[env, seat] == C.AXE and combat.weapon_left[env, seat, C.AXE] > 0
+        kind, tier = B.TOOL_NONE, B.TIER_HAND
+        level = int(combat._t_unbreaking[combat.kit_id[env, seat]])
+        efficiency = fortune = 0
+        silk = False
+        if held:
+            kind, tier = int(tools.kind[env, seat]), int(tools.tier[env, seat])
+            level = int(tools.unbreaking[env, seat])
+            efficiency, fortune = int(tools.efficiency[env, seat]), int(tools.fortune[env, seat])
+            silk = bool(tools.silk[env, seat])
+        elif holds_sword:
+            kind, tier = B.TOOL_SWORD, B.TIER_DIAMOND
+        elif holds_axe:
+            kind, tier = B.TOOL_AXE, self._axe_tier(env, seat)
+        haste = fatigue = 0
+        aqua = False
+        if tools is not None:
+            haste, fatigue = int(tools.haste[env, seat]), int(tools.fatigue[env, seat])
+            aqua = bool(tools.aqua[env, seat])
         code, out = sim.world.dig(
             self._eye(env, seat),
             self._look_of(env, seat),
-            tool=B.TOOL_SWORD if holds_sword else B.TOOL_NONE,
-            tier=B.TIER_DIAMOND if holds_sword else B.TIER_HAND,
+            tool=kind,
+            tier=tier,
             on_ground=bool(sim.on_ground[env, seat]),
+            efficiency=efficiency,
+            haste=haste,
+            fatigue=fatigue,
+            aqua=aqua,
             unbreaking=level,
             seat=seat,
             arena=env,
+            fortune=fortune,
+            silk=silk,
         )
-        if code == 1 and holds_sword:
-            sim.combat.wear_sword(env, seat, out[5])
+        if code != 1:
+            return
+        if held:
+            tools.left[env, seat] = max(int(tools.left[env, seat]) - out[5], 0)
+        elif holds_sword:
+            combat.wear_sword(env, seat, out[5])
+        elif holds_axe:
+            combat.wear_axe(env, seat, out[5])
 
     def _throw_pearl(self, env: int, seat: int) -> None:
         if self.pearl_cooldown[env, seat] > 0 or self.pearl_on[env, seat]:

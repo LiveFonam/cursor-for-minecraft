@@ -57,6 +57,13 @@ SH_WEB = 8
 DROP_PLAIN = 0
 DROP_GRAVEL = 1
 DROP_LEAVES = 2
+DROP_ORE = 3
+DROP_REDSTONE = 4
+
+# Every block item stacks to 64, and a body carries 36 stacks.
+MAX_STACK = 64
+INVENTORY_SLOTS = 36
+MAX_CARRY = MAX_STACK * INVENTORY_SLOTS
 
 PICK = 1 << TOOL_PICKAXE
 SHOVEL = 1 << TOOL_SHOVEL
@@ -88,14 +95,21 @@ class Block:
     ignite: int = 0
     burn: int = 0
     shape: int = SH_FULL
+    xp_min: int = 0
+    xp_max: int = 0
 
 
 def _rock(name: str, hardness: float, drop: str | None = None) -> Block:
     return Block(name, hardness, PICK, True, NEEDS_WOOD, drop or name)
 
 
-def _ore(name: str, hardness: float, rank: int, drop: str, low: int = 1, high: int = 1) -> Block:
-    return Block(name, hardness, PICK, True, rank, drop, low, high, notable=True)
+def _ore(
+    name: str, hardness: float, rank: int, drop: str, low: int = 1, high: int = 1,
+    xp: tuple[int, int] = (0, 0), rule: int = DROP_ORE,
+) -> Block:
+    return Block(
+        name, hardness, PICK, True, rank, drop, low, high, rule, notable=True, xp_min=xp[0], xp_max=xp[1],
+    )
 
 
 def _open(name: str, **kw) -> Block:
@@ -144,20 +158,20 @@ BLOCKS: tuple[Block, ...] = (
     _open("fire", hardness=0.0, replaceable=True, washable=True, shape=SH_FIRE),
     Block("barrier", -1.0),
     Block("glass", 0.3, opaque=False),
-    _ore("coal_ore", 3.0, NEEDS_WOOD, "coal"),
-    _ore("deepslate_coal_ore", 4.5, NEEDS_WOOD, "coal"),
+    _ore("coal_ore", 3.0, NEEDS_WOOD, "coal", xp=(0, 2)),
+    _ore("deepslate_coal_ore", 4.5, NEEDS_WOOD, "coal", xp=(0, 2)),
     _ore("copper_ore", 3.0, NEEDS_STONE, "raw_copper", 2, 5),
     _ore("deepslate_copper_ore", 4.5, NEEDS_STONE, "raw_copper", 2, 5),
     _ore("iron_ore", 3.0, NEEDS_STONE, "raw_iron"),
     _ore("deepslate_iron_ore", 4.5, NEEDS_STONE, "raw_iron"),
-    _ore("lapis_ore", 3.0, NEEDS_STONE, "lapis_lazuli", 4, 9),
-    _ore("deepslate_lapis_ore", 4.5, NEEDS_STONE, "lapis_lazuli", 4, 9),
+    _ore("lapis_ore", 3.0, NEEDS_STONE, "lapis_lazuli", 4, 9, xp=(2, 5)),
+    _ore("deepslate_lapis_ore", 4.5, NEEDS_STONE, "lapis_lazuli", 4, 9, xp=(2, 5)),
     _ore("gold_ore", 3.0, NEEDS_IRON, "raw_gold"),
     _ore("deepslate_gold_ore", 4.5, NEEDS_IRON, "raw_gold"),
-    _ore("redstone_ore", 3.0, NEEDS_IRON, "redstone", 4, 5),
-    _ore("deepslate_redstone_ore", 4.5, NEEDS_IRON, "redstone", 4, 5),
-    _ore("diamond_ore", 3.0, NEEDS_IRON, "diamond"),
-    _ore("deepslate_diamond_ore", 4.5, NEEDS_IRON, "diamond"),
+    _ore("redstone_ore", 3.0, NEEDS_IRON, "redstone", 4, 5, xp=(1, 5), rule=DROP_REDSTONE),
+    _ore("deepslate_redstone_ore", 4.5, NEEDS_IRON, "redstone", 4, 5, xp=(1, 5), rule=DROP_REDSTONE),
+    _ore("diamond_ore", 3.0, NEEDS_IRON, "diamond", xp=(3, 7)),
+    _ore("deepslate_diamond_ore", 4.5, NEEDS_IRON, "diamond", xp=(3, 7)),
     Block(
         "cobblestone_slab", 2.0, PICK, True, NEEDS_WOOD, "cobblestone_slab", opaque=False,
         waterloggable=True, shape=SH_SLAB,
@@ -341,6 +355,8 @@ def header_text() -> str:
         f"#define DROP_PLAIN {DROP_PLAIN}",
         f"#define DROP_GRAVEL {DROP_GRAVEL}",
         f"#define DROP_LEAVES {DROP_LEAVES}",
+        f"#define DROP_ORE {DROP_ORE}",
+        f"#define DROP_REDSTONE {DROP_REDSTONE}",
         f"#define TOOL_SWORD {TOOL_SWORD}",
         f"#define TOOL_SHEARS {TOOL_SHEARS}",
     ]
@@ -357,6 +373,8 @@ def header_text() -> str:
     lines.append(_c_int_array("DROP_RULE", "uint8_t", [b.drop_rule for b in rows]))
     lines.append(_c_int_array("IGNITE", "uint8_t", [b.ignite for b in rows]))
     lines.append(_c_int_array("BURN", "uint8_t", [b.burn for b in rows]))
+    lines.append(_c_int_array("XP_MIN", "uint8_t", [b.xp_min for b in rows]))
+    lines.append(_c_int_array("XP_MAX", "uint8_t", [b.xp_max for b in rows]))
     speeds = ", ".join(f"{s:.1f}f" for s in TIER_SPEED)
     ranks = ", ".join(str(r) for r in TIER_RANK)
     lines.append(f"static const float TIER_SPEED[8] = {{{speeds}}};")

@@ -78,7 +78,11 @@ _SIGNATURES: dict[str, tuple[object, list[object]]] = {
     "w_items": (None, [P, DP]),
     "w_spawn_item": (None, [P, D, D, D, I, I, I, D, D, D]),
     "w_falling_count": (I, [P]),
-    "w_pickup": (I, [P, DP, D, D, I32, I32, I]),
+    "w_spawn_falling": (None, [P, D, D, D, ct.c_uint16, D, I]),
+    "w_falling_vy": (D, [P, I]),
+    "w_xp": (ct.c_int32, [P, I]),
+    "w_pickup": (I, [P, DP, D, D, I32, I32, I32, I]),
+    "pickup_ready_many": (None, [PP, I, I, DP, DP, DP, U8]),
     "collide_many": (None, [PP, I, I, DP, DP, DP, DP, U8, D, DP, U8, U8]),
     "fluid_box_many": (None, [PP, I, I, DP, DP, DP, DP, U8, DP, DP, I32]),
     "contact_many": (None, [PP, I, I, DP, DP, DP, U8]),
@@ -86,7 +90,7 @@ _SIGNATURES: dict[str, tuple[object, list[object]]] = {
     "ray_collide_many": (None, [PP, I, I, DP, DP, D, U8, I32, I8, DP]),
     "w_place": (I, [P, I, I, DP, DP, D, DP, I, I32]),
     "place_many": (None, [PP, I, I, I32, U8, DP, DP, DP, DP, I32]),
-    "w_dig": (I, [P, I, I, I, I, I, I, I, I, I, DP, DP, I32]),
+    "w_dig": (I, [P, I, I, I, I, I, I, I, I, I, I, I, DP, DP, I32]),
     "w_dig_stop": (None, [P, I]),
     "dig_many": (None, [PP, I, I, U8, I32, I32, U8, DP, DP, I32, I32]),
     "w_bucket_fill": (I, [P, I, DP, DP, I32]),
@@ -476,12 +480,14 @@ class Arenas:
         unbreaking: int = 0,
         seat: int = 0,
         arena: int = 0,
+        fortune: int = 0,
+        silk: bool = False,
     ) -> tuple[int, tuple[int, ...]]:
-        """Dig for one tick. Return (code, (x, y, z, block, harvest, durability cost))."""
-        out = (ct.c_int32 * 6)()
+        """Dig for one tick. Return (code, (x, y, z, block, harvest, durability cost, experience))."""
+        out = (ct.c_int32 * 7)()
         code = self._lib.w_dig(
             self._h(arena), seat, tool, tier, efficiency, haste, fatigue, int(aqua), unbreaking,
-            int(on_ground), _vec(eye), _vec(look), out,
+            fortune, int(silk), int(on_ground), _vec(eye), _vec(look), out,
         )
         return code, tuple(out)
 
@@ -514,12 +520,40 @@ class Arenas:
     def falling_count(self, arena: int = 0) -> int:
         return int(self._lib.w_falling_count(self._h(arena)))
 
-    def pickup(self, pos, width: float = 0.6, height: float = 1.8, arena: int = 0) -> list[tuple[int, int]]:
-        """Collect items in reach of a body and return (item, count) pairs."""
+    def spawn_falling(self, x, y, z, cell: int, vy: float = 0.0, age: int = 0, arena: int = 0) -> None:
+        """Add a falling block entity."""
+        self._lib.w_spawn_falling(self._h(arena), x, y, z, cell, vy, age)
+
+    def falling_vy(self, index: int = 0, arena: int = 0) -> float:
+        return float(self._lib.w_falling_vy(self._h(arena), index))
+
+    def experience(self, seat: int = 0, arena: int = 0) -> int:
+        """Return the experience a body has earned from mining this round."""
+        return int(self._lib.w_xp(self._h(arena), seat))
+
+    def pickup(
+        self, pos, width: float = 0.6, height: float = 1.8, arena: int = 0, room: np.ndarray | None = None
+    ) -> list[tuple[int, int]]:
+        """Collect items in reach of a body and return (item, count) pairs.
+
+        Room is an int32 array of 256 free counts by item id. What does not fit stays on the ground.
+        """
         ids = (ct.c_int32 * 128)()
         counts = (ct.c_int32 * 128)()
-        n = self._lib.w_pickup(self._h(arena), _vec(pos), width, height, ids, counts, 128)
+        free = None if room is None else _ptr(room, ct.c_int32)
+        n = self._lib.w_pickup(self._h(arena), _vec(pos), width, height, free, ids, counts, 128)
         return [(ids[i], counts[i]) for i in range(n)]
+
+    def pickup_ready(self, pos: np.ndarray, width: np.ndarray, height: np.ndarray) -> np.ndarray:
+        """Return which bodies of shape (n, seats) have an item ready to collect."""
+        out = np.zeros(pos.shape[:2], dtype=np.uint8)
+        self._lib.pickup_ready_many(
+            self.handles, self.n, pos.shape[1], _ptr(pos, ct.c_double),
+            _ptr(np.ascontiguousarray(width, dtype=np.float64), ct.c_double),
+            _ptr(np.ascontiguousarray(height, dtype=np.float64), ct.c_double),
+            _ptr(out, ct.c_uint8),
+        )
+        return out.astype(bool)
 
     def see(self, seat: int, eye, yaw: float, pitch: float, sight_range: int = 8, arena: int = 0) -> int:
         """Update one body's seen block memory and return the number of cells read."""

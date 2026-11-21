@@ -9,13 +9,14 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 from . import blocks as B
 from . import gen
-from .config import FULL, WorldConfig
+from .config import FULL, TERRAIN_FEATURES, WorldConfig
 from .kernel import Arenas, BaseWorld
 
 SETTLE_TICK_LIMIT = 40000
@@ -29,11 +30,11 @@ def default_cache_dir() -> Path:
 
 
 def settle(raw: np.ndarray, config: WorldConfig = FULL) -> tuple[np.ndarray, int]:
-    """Run real fluid ticks until no fluid changes. Return the cells and the ticks used."""
+    """Run real fluid ticks, with no random ticks, until no fluid changes. Return the cells and the ticks used."""
     if not config.fluids:
         return raw, 0
     base = BaseWorld.from_array(raw)
-    arenas = Arenas(base, 1, memory_cap=0, config=config)
+    arenas = Arenas(base, 1, memory_cap=0, config=replace(config, random_ticks=False))
     used = 0
     try:
         for _ in range(SETTLE_PASSES):
@@ -69,7 +70,8 @@ def cache_path(
 ) -> Path:
     """Return the cache file for a world."""
     folder = Path(cache_dir) if cache_dir is not None else default_cache_dir()
-    name = f"world-s{seed}-n{size}-c{config.features:x}-g{gen.GENERATOR_VERSION}-{_tables_tag()}.bin"
+    terrain = config.features & TERRAIN_FEATURES
+    name = f"world-s{seed}-n{size}-c{terrain:x}-g{gen.GENERATOR_VERSION}-{_tables_tag()}.bin"
     return folder / name
 
 

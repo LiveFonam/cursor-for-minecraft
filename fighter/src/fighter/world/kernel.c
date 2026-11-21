@@ -21,6 +21,11 @@
 #define BASE_VERSION 2u
 #define FEAT_FLUIDS 1
 #define FEAT_FIRE 2
+#define FEAT_RANDOM 16
+#define RANDOM_PER_SECTION 3
+#define ITEM_HEALTH 5
+#define ITEM_MERGE_EVERY 40
+#define MAX_STACK 64
 #define MAX_ITEMS 128
 #define MAX_FALLING 64
 #define SEATS 2
@@ -57,7 +62,13 @@ typedef struct {
     const uint8_t *idx;
     int nx, nz, sx, sy, sz, ylo, yhi;
     void *owned;
+    uint32_t *ticking, nticking, *ticking_at;
+    uint64_t *ticking_bits;
+    uint16_t *ticking_cells;
+    int32_t *ticking_slot;
 } Base;
+
+static inline int random_block(int id) { return id == B_OAK_LEAVES || id == B_GRASS_BLOCK || id == B_LAVA; }
 
 static void base_bind(Base *b, const void *blob) {
     const BaseHeader *h = blob;
@@ -71,6 +82,22 @@ static void base_bind(Base *b, const void *blob) {
     b->raw = (const uint16_t *)p; p += (size_t)h->raws * 8192;
     b->idx = p;
 }
+
+static inline uint16_t section_cell(const Base *b, uint32_t e, int i) {
+    if (e & UNIFORM) return (uint16_t)e;
+    if (e & RAWSEC) return b->raw[(size_t)(e & ~RAWSEC) * 4096 + i];
+    return b->pal[(size_t)e * 256 + b->idx[(size_t)e * 4096 + i]];
+}
+
+static int section_may_tick(const Base *b, uint32_t e) {
+    if (e & UNIFORM) return random_block((int)(e & 0xFF));
+    if (e & RAWSEC) return 1;
+    const uint16_t *pal = b->pal + (size_t)e * 256;
+    for (int i = 0; i < 256; i++) if (random_block(pal[i] & 0xFF)) return 1;
+    return 0;
+}
+
+static void base_find_ticking(Base *b);
 
 /* Stores the cells from ylo up to but not including yhi, both on section boundaries.
    Cells below the band read as bedrock and cells above it read as air. */
@@ -126,6 +153,7 @@ void *base_build(const uint16_t *raw, int nx, int nz, int ylo, int yhi) {
     free(kind); free(map); free(cell); free(seen);
     Base *b = calloc(1, sizeof(Base));
     base_bind(b, blob);
+    base_find_ticking(b);
     b->owned = blob;
     return b;
 }
@@ -136,6 +164,7 @@ void *base_open(const void *blob, uint64_t size) {
     if (size < sizeof(BaseHeader) || h->magic != BASE_MAGIC || h->version != BASE_VERSION || h->bytes != size) return NULL;
     Base *b = calloc(1, sizeof(Base));
     base_bind(b, blob);
+    base_find_ticking(b);
     return b;
 }
 const void *base_blob(void *p) { return ((Base *)p)->h; }
@@ -146,7 +175,12 @@ int base_nx(void *p) { return ((Base *)p)->nx; }
 int base_nz(void *p) { return ((Base *)p)->nz; }
 int base_ylo(void *p) { return ((Base *)p)->ylo; }
 int base_yhi(void *p) { return ((Base *)p)->yhi; }
-void base_free(void *p) { Base *b = p; free(b->owned); free(b); }
+void base_free(void *p) {
+    Base *b = p;
+    free(b->owned); free(b->ticking); free(b->ticking_at); free(b->ticking_slot);
+    free(b->ticking_bits); free(b->ticking_cells);
+    free(b);
+}
 
 static inline size_t sec_index(const Base *b, int x, int yi, int z) {
     return (((size_t)(x >> 4) * b->sz) + (z >> 4)) * b->sy + (yi >> 4);
@@ -166,6 +200,7 @@ typedef struct {
     int32_t age, delay;
     uint16_t item, count;
     uint8_t ground;
+    int8_t health;
 } Item;
 
 typedef struct {
@@ -192,6 +227,7 @@ typedef struct {
     int digging, dx, dy, dz;
     double progress;
     int dig_delay, use_cd;
+    int32_t xp;
     Mem *mem;
 } Seat;
 
@@ -216,6 +252,9 @@ typedef struct Arena {
     Falling *falling;
     int nfalling;
     Seat seats[SEATS];
+    uint32_t *rt_added, rt_n, rt_cap;
+    uint64_t *rt_bits;
+    uint8_t *col_edit;
     uint32_t *trace;
     int trace_cap, trace_n;
 } Arena;
@@ -235,9 +274,11 @@ void *arena_new(void *base, uint64_t seed, uint64_t mem_cap, int client_model, i
     a->dwords = (a->ns + 63) / 64;
     a->dirty = calloc(a->dwords, 8);
     a->scount = calloc(a->ns, 1);
+    a->rt_bits = calloc(a->dwords, 8);
+    a->col_edit = calloc((size_t)a->b->sx * a->b->sz, 1);
     a->pcap = 256;
     a->pkeys = calloc(a->pcap, 4); a->pdue = malloc(a->pcap * 4); a->pused = malloc(a->pcap * 4);
-    a->mem = sizeof(Arena) + a->cap * 10 + a->dwords * 8 + a->ns + a->pcap * 12;
+    a->mem = sizeof(Arena) + a->cap * 10 + a->dwords * 16 + a->ns + a->pcap * 12 + (size_t)a->b->sx * a->b->sz;
     a->mem_cap = mem_cap;
     a->client_model = client_model;
     a->features = features;
@@ -255,6 +296,9 @@ void arena_reset(void *p) {
     a->n = a->pn = 0;
     memset(a->dirty, 0, a->dwords * 8);
     memset(a->scount, 0, a->ns);
+    for (uint32_t i = 0; i < a->rt_n; i++) a->rt_bits[a->rt_added[i] >> 6] &= ~(1ull << (a->rt_added[i] & 63));
+    a->rt_n = 0;
+    memset(a->col_edit, 0, (size_t)a->b->sx * a->b->sz);
     memset(a->wlen, 0, sizeof(a->wlen));
     a->pending = 0; a->now = 0; a->hot_n = 0; a->full = 0;
     a->nitems = 0; a->nfalling = 0; a->trace_n = 0;
@@ -273,7 +317,7 @@ void arena_free(void *p) {
     for (int w = 0; w < 2; w++) for (int i = 0; i < WHEEL; i++) free(a->wheel[w][i]);
     for (int i = 0; i < HOT_SLOTS; i++) free(a->hot[i]);
     for (int s = 0; s < SEATS; s++) free(a->seats[s].mem);
-    free(a->items); free(a->falling); free(a->trace);
+    free(a->items); free(a->falling); free(a->trace); free(a->rt_added); free(a->rt_bits); free(a->col_edit);
     free(a);
 }
 
@@ -621,6 +665,30 @@ static inline uint16_t with_stair_shape(uint16_t c, int shape) {
     return (uint16_t)((c & ~(7 << 11)) | (shape << 11));
 }
 
+/* Marks a chunk column and the eight around it as edited, so their random ticks read live cells. */
+static void mark_column(Arena *a, int x, int z) {
+    const Base *b = a->b;
+    int cx = x >> 4, cz = z >> 4;
+    if (a->col_edit[(size_t)cx * b->sz + cz]) return;
+    for (int i = cx - 1; i <= cx + 1; i++) for (int j = cz - 1; j <= cz + 1; j++)
+        if (i >= 0 && j >= 0 && i < b->sx && j < b->sz) a->col_edit[(size_t)i * b->sz + j] = 1;
+}
+
+/* Adds an edited section to the arena's random tick list. */
+static void mark_ticking(Arena *a, int x, int y, int z) {
+    const Base *b = a->b;
+    uint32_t s = (uint32_t)sec_index(b, x, y - b->ylo, z);
+    if (((b->ticking_bits[s >> 6] | a->rt_bits[s >> 6]) >> (s & 63)) & 1) return;
+    if (a->rt_n == a->rt_cap) {
+        uint32_t nc = a->rt_cap ? a->rt_cap * 2 : 16;
+        if (!mem_ok(a, (size_t)(nc - a->rt_cap) * 4)) return;
+        a->rt_added = realloc(a->rt_added, (size_t)nc * 4);
+        a->rt_cap = nc;
+    }
+    a->rt_bits[s >> 6] |= 1ull << (s & 63);
+    a->rt_added[a->rt_n++] = s;
+}
+
 static void set_cell(Arena *a, int x, int y, int z, uint16_t nw) {
     if (!in_world(a->b, x, y, z)) return;
     if (!(a->features & FEAT_FLUIDS)) {
@@ -632,7 +700,9 @@ static void set_cell(Arena *a, int x, int y, int z, uint16_t nw) {
     if (old == nw) return;
     aput(a, x, y, z, nw);
     a->sets++;
+    mark_column(a, x, z);
     int id = nw & 0xFF;
+    if (random_block(id)) mark_ticking(a, x, y, z);
     if (id == B_LAVA && lava_wet(a, x, y, z)) {
         set_cell(a, x, y, z, fsrc(nw) ? (uint16_t)B_OBSIDIAN : (uint16_t)B_COBBLESTONE);
         return;
@@ -1239,21 +1309,34 @@ static void spawn_item(Arena *a, double x, double y, double z, int item, int cou
     }
     it->x = x; it->y = y; it->z = z; it->vx = vx; it->vy = vy; it->vz = vz;
     it->age = 0; it->delay = delay; it->item = (uint16_t)item; it->count = (uint16_t)count; it->ground = 0;
+    it->health = ITEM_HEALTH;
 }
 
-static void drop_items(Arena *a, int x, int y, int z, uint16_t c) {
-    int id = c & 0xFF, item = 0, count = 0;
+/* Keep means the block drops itself, as with Silk Touch or shears on leaves and cobweb. */
+static void drop_items(Arena *a, int x, int y, int z, uint16_t c, int fortune, int keep) {
+    static const double FLINT[4] = {0.1, 1.0 / 7.0, 0.25, 1.0};
+    static const double SAPLING[4] = {0.05, 0.0625, 1.0 / 12.0, 0.1};
+    static const double STICKS[4] = {0.02, 1.0 / 45.0, 0.025, 1.0 / 30.0};
+    int id = c & 0xFF, item = 0, count = 0, level = fortune < 0 ? 0 : fortune > 3 ? 3 : fortune;
     if (SHAPE[id] == SH_DOOR && ((c >> 12) & 1)) return;
-    if (DROP_RULE[id] == DROP_LEAVES) {
+    if (keep) {
+        if (id != B_FIRE) { item = id; count = 1; }
+    } else if (DROP_RULE[id] == DROP_LEAVES) {
         double r = rnd_unit(a);
-        if (r < 0.05) { item = IT_OAK_SAPLING; count = 1; }
-        else if (r < 0.07) { item = IT_STICK; count = 1 + rnd_below(a, 2); }
+        if (r < SAPLING[level]) { item = IT_OAK_SAPLING; count = 1; }
+        else if (r < SAPLING[level] + STICKS[level]) { item = IT_STICK; count = 1 + rnd_below(a, 2); }
     } else if (DROP_RULE[id] == DROP_GRAVEL) {
-        item = rnd_below(a, 10) == 0 ? IT_FLINT : B_GRAVEL;
+        item = rnd_unit(a) < FLINT[level] ? IT_FLINT : B_GRAVEL;
         count = 1;
     } else if (DROP_ID[id]) {
         item = DROP_ID[id];
         count = DROP_MIN[id] + rnd_below(a, DROP_MAX[id] - DROP_MIN[id] + 1);
+        if (level > 0 && DROP_RULE[id] == DROP_ORE) {
+            int bonus = rnd_below(a, level + 2) - 1;
+            if (bonus > 0) count *= 1 + bonus;
+        } else if (level > 0 && DROP_RULE[id] == DROP_REDSTONE) {
+            count += rnd_below(a, level + 1);
+        }
     }
     if (!item || count <= 0) return;
     double ox = 0.25 + rnd_unit(a) * 0.5, oy = 0.25 + rnd_unit(a) * 0.5, oz = 0.25 + rnd_unit(a) * 0.5;
@@ -1261,7 +1344,31 @@ static void drop_items(Arena *a, int x, int y, int z, uint16_t c) {
                (rnd_unit(a) - 0.5) * 0.2, 0.2, (rnd_unit(a) - 0.5) * 0.2);
 }
 
-static void pop_drop(Arena *a, int x, int y, int z, uint16_t c) { drop_items(a, x, y, z, c); }
+static void pop_drop(Arena *a, int x, int y, int z, uint16_t c) { drop_items(a, x, y, z, c, 0, 0); }
+
+/* Joins items of one kind that lie close together, with the larger stack keeping its place. */
+static void merge_items(Arena *a) {
+    for (int i = 0; i < a->nitems; i++) {
+        if (a->items[i].age % ITEM_MERGE_EVERY) continue;
+        for (int j = a->nitems - 1; j >= 0; j--) {
+            Item *it = &a->items[i], *o = &a->items[j];
+            if (j == i || it->count >= MAX_STACK) continue;
+            if (o->item != it->item || o->count >= MAX_STACK) continue;
+            if (fabs(o->x - it->x) > 0.5 || fabs(o->z - it->z) > 0.5 || fabs(o->y - it->y) > 0.25) continue;
+            if (o->count > it->count) { Item t = *it; *it = *o; *o = t; }
+            int take = MAX_STACK - it->count;
+            if (take > o->count) take = o->count;
+            it->count = (uint16_t)(it->count + take);
+            o->count = (uint16_t)(o->count - take);
+            if (o->delay > it->delay) it->delay = o->delay;
+            if (o->age < it->age) it->age = o->age;
+            if (o->count == 0) {
+                a->items[j] = a->items[--a->nitems];
+                if (i == a->nitems) i = j;
+            }
+        }
+    }
+}
 
 static void step_items(Arena *a) {
     for (int i = 0; i < a->nitems; i++) {
@@ -1272,7 +1379,11 @@ static void step_items(Arena *a) {
         uint16_t c = aget(a, cx, cy, cz);
         int k = (a->features & FEAT_FLUIDS) ? fkind(c) : 0;
         double top = k ? cy + fluid_height(a, cx, cy, cz, c) : 0;
-        if (it->age >= 6000 || (k == B_LAVA && top > it->y)) { a->items[i--] = a->items[--a->nitems]; continue; }
+        if ((c & 0xFF) == B_FIRE) it->health--;
+        if (it->age >= 6000 || it->health <= 0 || (k == B_LAVA && top > it->y)) {
+            a->items[i--] = a->items[--a->nitems];
+            continue;
+        }
         if (k == B_WATER && top - it->y > 0.1) {
             double v[3];
             flow_vector(a, cx, cy, cz, v);
@@ -1293,6 +1404,7 @@ static void step_items(Arena *a) {
         double fr = ground ? 0.6 * 0.98 : 0.98;
         it->vx *= fr; it->vz *= fr; it->vy *= 0.98;
     }
+    merge_items(a);
 }
 
 static void step_falling(Arena *a) {
@@ -1305,8 +1417,9 @@ static void step_falling(Arena *a) {
         int landed = f->vy < 0 && m != f->vy;
         f->y += m;
         f->vy *= 0.98;
-        if (!landed && f->age < 600 && f->y > Y_MIN - 8) continue;
         int cx = ifloor(f->x), cy = ifloor(f->y + 1e-6), cz = ifloor(f->z);
+        int outside = f->age >= 100 && (cy <= Y_MIN || cy > Y_MAX);
+        if (!landed && f->age < 600 && !outside && f->y > Y_MIN - 8) continue;
         uint16_t here = aget(a, cx, cy, cz), below = aget(a, cx, cy - 1, cz);
         if (landed && (FLAGS[here & 0xFF] & F_REPLACEABLE) && solid_top(below)) {
             set_cell(a, cx, cy, cz, f->cell);
@@ -1387,6 +1500,194 @@ static void run_wheel(Arena *a, int wheel) {
     a->wlen[wheel][w] = 0;
 }
 
+/* ---------- Random ticks ---------- */
+
+/* Walks through leaves for a log within 6 steps. */
+static int leaf_held(const Arena *a, int x, int y, int z) {
+    uint8_t seen[2197 / 8 + 1] = {0};
+    int8_t qx[256], qy[256], qz[256], qd[256];
+    int head = 0, tail = 1;
+    qx[0] = qy[0] = qz[0] = qd[0] = 0;
+    seen[(6 * 169 + 6 * 13 + 6) >> 3] |= (uint8_t)(1 << ((6 * 169 + 6 * 13 + 6) & 7));
+    while (head < tail) {
+        int cx = qx[head], cy = qy[head], cz = qz[head], depth = qd[head];
+        head++;
+        for (int i = 0; i < 6; i++) {
+            int nx = cx + DX6[i], ny = cy + DY6[i], nz = cz + DZ6[i];
+            int id = aget(a, x + nx, y + ny, z + nz) & 0xFF;
+            if (id == B_OAK_LOG) return 1;
+            if (id != B_OAK_LEAVES || depth + 1 > 5) continue;
+            int bit = (nx + 6) * 169 + (nz + 6) * 13 + (ny + 6);
+            if ((seen[bit >> 3] >> (bit & 7)) & 1) continue;
+            seen[bit >> 3] |= (uint8_t)(1 << (bit & 7));
+            qx[tail] = (int8_t)nx; qy[tail] = (int8_t)ny; qz[tail] = (int8_t)nz; qd[tail] = (int8_t)(depth + 1);
+            tail++;
+        }
+    }
+    return 0;
+}
+
+static void leaf_random(Arena *a, int x, int y, int z, uint16_t c) {
+    if ((c >> 11) & 1) return;
+    if (leaf_held(a, x, y, z)) return;
+    pop_drop(a, x, y, z, c);
+    set_cell(a, x, y, z, logged(c) ? mk_fluid(B_WATER, 8, 0) : (uint16_t)B_AIR);
+}
+
+static int covers_grass(uint16_t c) {
+    int id = c & 0xFF, shape = SHAPE[id];
+    if (FLAGS[id] & F_OPAQUE) return 1;
+    if (shape == SH_SLAB || shape == SH_STAIRS) return (face_mask(c) >> D_DOWN) & 1;
+    return fkind(c) && famt(c) == 8;
+}
+
+/* The world has no light values, so open sky stands in for enough light to grow. */
+static int sees_sky(const Arena *a, int x, int y, int z) {
+    for (int j = y + 1; j < a->b->yhi; j++)
+        if (FLAGS[aget(a, x, j, z) & 0xFF] & F_OPAQUE) return 0;
+    return 1;
+}
+
+static void grass_random(Arena *a, int x, int y, int z) {
+    if (covers_grass(aget(a, x, y + 1, z))) { set_cell(a, x, y, z, B_DIRT); return; }
+    for (int t = 0; t < 4; t++) {
+        int jx = x + rnd_below(a, 3) - 1, jy = y + rnd_below(a, 5) - 3, jz = z + rnd_below(a, 3) - 1;
+        if ((aget(a, jx, jy, jz) & 0xFF) != B_DIRT) continue;
+        uint16_t above = aget(a, jx, jy + 1, jz);
+        if (covers_grass(above) || fkind(above) == B_WATER || !sees_sky(a, jx, jy, jz)) continue;
+        set_cell(a, jx, jy, jz, B_GRASS_BLOCK);
+    }
+}
+
+/* Lava lights air beside a flammable block up to two layers above, or the top of a block beside it. */
+static void lava_random(Arena *a, int x, int y, int z) {
+    if (!(a->features & FEAT_FIRE)) return;
+    int rises = rnd_below(a, 3);
+    if (rises > 0) {
+        int px = x, py = y, pz = z;
+        for (int j = 0; j < rises; j++) {
+            px += rnd_below(a, 3) - 1; py += 1; pz += rnd_below(a, 3) - 1;
+            if (!in_world(a->b, px, py, pz)) return;
+            uint16_t c = aget(a, px, py, pz);
+            if ((c & 0xFF) == B_AIR) {
+                if (flammable_near(a, px, py, pz)) { set_cell(a, px, py, pz, B_FIRE); return; }
+            } else if (FLAGS[c & 0xFF] & F_SOLID) {
+                return;
+            }
+        }
+        return;
+    }
+    for (int k = 0; k < 3; k++) {
+        int qx = x + rnd_below(a, 3) - 1, qz = z + rnd_below(a, 3) - 1;
+        if (!in_world(a->b, qx, y + 1, qz)) continue;
+        if ((aget(a, qx, y + 1, qz) & 0xFF) == B_AIR && ignite_of(aget(a, qx, y, qz)) > 0)
+            set_cell(a, qx, y + 1, qz, B_FIRE);
+    }
+}
+
+/* True when a random tick on this cell could change the world as it stands. */
+static int grass_can_act(const Arena *a, int x, int y, int z) {
+    if (covers_grass(aget(a, x, y + 1, z))) return 1;
+    for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) for (int dy = -3; dy <= 1; dy++) {
+        if ((aget(a, x + dx, y + dy, z + dz) & 0xFF) != B_DIRT) continue;
+        uint16_t above = aget(a, x + dx, y + dy + 1, z + dz);
+        if (!covers_grass(above) && fkind(above) != B_WATER && sees_sky(a, x + dx, y + dy, z + dz)) return 1;
+    }
+    return 0;
+}
+
+static int lava_can_act(const Arena *a, int x, int y, int z) {
+    for (int dx = -3; dx <= 3; dx++) for (int dz = -3; dz <= 3; dz++) for (int dy = 0; dy <= 3; dy++)
+        if (ignite_of(aget(a, x + dx, y + dy, z + dz)) > 0) return 1;
+    return 0;
+}
+
+static int cell_can_act(const Arena *a, int x, int y, int z, uint16_t c) {
+    switch (c & 0xFF) {
+        case B_OAK_LEAVES: return !((c >> 11) & 1) && !leaf_held(a, x, y, z);
+        case B_GRASS_BLOCK: return grass_can_act(a, x, y, z);
+        case B_LAVA: return lava_can_act(a, x, y, z);
+        default: return 0;
+    }
+}
+
+/* Lists the sections holding a block with a random tick, and in each the cells whose tick could
+   change the unedited world. A draw that lands anywhere else in such a section does nothing. */
+static void base_find_ticking(Base *b) {
+    size_t ns = (size_t)b->sx * b->sy * b->sz, total = 0, cap = 256;
+    Arena *view = calloc(1, sizeof(Arena));
+    view->b = b;
+    view->dirty = calloc((ns + 63) / 64 + 1, 8);
+    b->ticking = malloc((ns + 1) * 4);
+    b->ticking_at = malloc((ns + 1) * 4);
+    b->ticking_slot = malloc((ns + 1) * 4);
+    b->ticking_bits = calloc((ns + 63) / 64 + 1, 8);
+    b->ticking_cells = malloc(cap * 2);
+    b->nticking = 0;
+    for (int sx = 0; sx < b->sx; sx++) for (int sz = 0; sz < b->sz; sz++) for (int sy = 0; sy < b->sy; sy++) {
+        size_t s = ((size_t)sx * b->sz + sz) * b->sy + sy;
+        uint32_t e = b->sec[s];
+        int any = 0;
+        size_t first = total;
+        b->ticking_slot[s] = -1;
+        if (!section_may_tick(b, e)) continue;
+        for (int i = 0; i < 4096; i++) {
+            int x = sx * 16 + (i >> 8), z = sz * 16 + ((i >> 4) & 15), y = b->ylo + sy * 16 + (i & 15);
+            if (x >= b->nx || z >= b->nz) continue;
+            uint16_t c = section_cell(b, e, i);
+            if (!random_block(c & 0xFF)) continue;
+            any = 1;
+            if (!cell_can_act(view, x, y, z, c)) continue;
+            if (total == cap) { cap *= 2; b->ticking_cells = realloc(b->ticking_cells, cap * 2); }
+            b->ticking_cells[total++] = (uint16_t)i;
+        }
+        if (!any) continue;
+        b->ticking[b->nticking] = (uint32_t)s;
+        b->ticking_at[b->nticking] = (uint32_t)first;
+        b->ticking_slot[s] = (int32_t)b->nticking;
+        b->ticking_bits[s >> 6] |= 1ull << (s & 63);
+        b->nticking++;
+    }
+    b->ticking_at[b->nticking] = (uint32_t)total;
+    free(view->dirty);
+    free(view);
+}
+
+/* Each draw picks one of the section's 4096 cells. Where nothing near has been edited, the first
+   values stand for the listed cells and the rest for cells whose tick would do nothing. */
+static void section_random(Arena *a, uint32_t s) {
+    const Base *b = a->b;
+    int32_t slot = b->ticking_slot[s];
+    uint32_t col = s / (uint32_t)b->sy;
+    uint64_t r = rnd(a) >> 16;
+    for (int k = 0; k < RANDOM_PER_SECTION; k++, r >>= 12) {
+        int i = (int)(r & 4095);
+        if (slot >= 0 && !a->col_edit[col]) {
+            uint32_t at = b->ticking_at[slot], count = b->ticking_at[slot + 1] - at;
+            if ((uint32_t)i >= count) continue;
+            i = b->ticking_cells[at + (uint32_t)i];
+        }
+        int sy = (int)(s % (uint32_t)b->sy), sz = (int)(col % (uint32_t)b->sz), sx = (int)(col / (uint32_t)b->sz);
+        int x = sx * 16 + (i >> 8), z = sz * 16 + ((i >> 4) & 15), y = b->ylo + sy * 16 + (i & 15);
+        if (x >= b->nx || z >= b->nz) continue;
+        uint16_t c = aget(a, x, y, z);
+        int id = c & 0xFF;
+        if (id == B_OAK_LEAVES) leaf_random(a, x, y, z, c);
+        else if (id == B_GRASS_BLOCK) grass_random(a, x, y, z);
+        else if (id == B_LAVA) lava_random(a, x, y, z);
+    }
+}
+
+static void random_ticks(Arena *a) {
+    const Base *b = a->b;
+    for (uint32_t i = 0; i < b->nticking; i++) {
+        uint32_t s = b->ticking[i];
+        if (b->ticking_at[i] == b->ticking_at[i + 1] && !a->col_edit[s / (uint32_t)b->sy]) continue;
+        section_random(a, s);
+    }
+    for (uint32_t i = 0; i < a->rt_n; i++) section_random(a, a->rt_added[i]);
+}
+
 void w_tick(void *p, int n) {
     Arena *a = p;
     for (int t = 0; t < n; t++) {
@@ -1396,6 +1697,7 @@ void w_tick(void *p, int n) {
         }
         run_wheel(a, W_BLOCK);
         if (a->features & FEAT_FLUIDS) run_wheel(a, W_FLUID);
+        if (a->features & FEAT_RANDOM) random_ticks(a);
         if (a->nfalling) step_falling(a);
         if (a->nitems) step_items(a);
     }
@@ -1404,7 +1706,12 @@ void w_tick_many(void **arenas, int count, int n) { for (int i = 0; i < count; i
 
 uint16_t w_get(void *p, int x, int y, int z) { return aget(p, x, y, z); }
 void w_set(void *p, int x, int y, int z, uint16_t v) { set_cell(p, x, y, z, v); }
-void w_poke(void *p, int x, int y, int z, uint16_t v) { if (in_world(((Arena *)p)->b, x, y, z)) aput(p, x, y, z, v); }
+void w_poke(void *p, int x, int y, int z, uint16_t v) {
+    if (!in_world(((Arena *)p)->b, x, y, z)) return;
+    aput(p, x, y, z, v);
+    mark_column(p, x, z);
+    if (random_block(v & 0xFF)) mark_ticking(p, x, y, z);
+}
 void w_schedule(void *p, int wheel, int x, int y, int z, int delay) { schedule(p, wheel, x, y, z, delay); }
 void w_flow(void *p, int x, int y, int z, double *out) { flow_vector(p, x, y, z, out); }
 double w_fluid_height(void *p, int x, int y, int z) { return fluid_height(p, x, y, z, aget(p, x, y, z)); }
@@ -1460,21 +1767,58 @@ void w_spawn_item(void *p, double x, double y, double z, int item, int count, in
     spawn_item(p, x, y, z, item, count, delay, vx, vy, vz);
 }
 int w_falling_count(void *p) { return ((Arena *)p)->nfalling; }
+void w_spawn_falling(void *p, double x, double y, double z, uint16_t cell, double vy, int age) {
+    Arena *a = p;
+    if (!a->falling) {
+        if (!mem_ok(a, MAX_FALLING * sizeof(Falling))) return;
+        a->falling = malloc(MAX_FALLING * sizeof(Falling));
+    }
+    if (a->nfalling >= MAX_FALLING) return;
+    Falling *f = &a->falling[a->nfalling++];
+    f->x = x; f->y = y; f->z = z; f->vy = vy; f->age = age; f->cell = cell;
+}
+double w_falling_vy(void *p, int i) { return ((Arena *)p)->falling[i].vy; }
+int32_t w_xp(void *p, int seat) { return ((Arena *)p)->seats[seat].xp; }
 
-/* Collects items whose box meets the body box grown by 1 sideways and 0.5 up and down. */
-int w_pickup(void *p, const double *pos, double width, double height, int32_t *ids, int32_t *counts, int cap) {
+static inline int item_in_reach(const Item *it, const AABB *b) {
+    return it->delay <= 0 && it->x + 0.125 >= b->lo[0] - 1 && it->x - 0.125 <= b->hi[0] + 1 &&
+           it->z + 0.125 >= b->lo[2] - 1 && it->z - 0.125 <= b->hi[2] + 1 &&
+           it->y + 0.25 >= b->lo[1] - 0.5 && it->y <= b->hi[1] + 0.5;
+}
+
+/* Marks the bodies with at least one item ready to collect. */
+void pickup_ready_many(void **arenas, int n, int seats, const double *pos, const double *width, const double *height,
+                       uint8_t *out) {
+    for (int i = 0; i < n; i++) for (int s = 0; s < seats; s++) {
+        int k = i * seats + s;
+        const Arena *a = arenas[i];
+        out[k] = 0;
+        if (!a->nitems) continue;
+        AABB b = body_box(pos + 3 * k, width[k], height[k]);
+        for (int j = 0; j < a->nitems; j++) if (item_in_reach(&a->items[j], &b)) { out[k] = 1; break; }
+    }
+}
+
+/* Collects items whose box meets the body box grown by 1 sideways and 0.5 up and down.
+   Room, when given, holds the free space per item id, and what does not fit stays on the ground. */
+int w_pickup(void *p, const double *pos, double width, double height, int32_t *room, int32_t *ids, int32_t *counts,
+             int cap) {
     Arena *a = p;
     AABB b = body_box(pos, width, height);
     int got = 0;
     for (int i = 0; i < a->nitems && got < cap; i++) {
         Item *it = &a->items[i];
-        if (it->delay > 0) continue;
-        if (it->x + 0.125 < b.lo[0] - 1 || it->x - 0.125 > b.hi[0] + 1) continue;
-        if (it->z + 0.125 < b.lo[2] - 1 || it->z - 0.125 > b.hi[2] + 1) continue;
-        if (it->y + 0.25 < b.lo[1] - 0.5 || it->y > b.hi[1] + 0.5) continue;
+        if (!item_in_reach(it, &b)) continue;
+        int take = it->count;
+        if (room) {
+            if (room[it->item] <= 0) continue;
+            if (take > room[it->item]) take = room[it->item];
+            room[it->item] -= take;
+        }
         ids[got] = it->item;
-        counts[got] = it->count;
+        counts[got] = take;
         got++;
+        if (take < it->count) { it->count = (uint16_t)(it->count - take); continue; }
         a->items[i--] = a->items[--a->nitems];
     }
     return got;
@@ -1613,9 +1957,9 @@ void w_dig_stop(void *p, int seat) {
 }
 
 /* Returns 1 on a break, 0 on progress and a negative code when nothing is dug.
-   Out holds x, y, z, block, harvest flag and durability cost. */
+   Out holds x, y, z, block, harvest flag, durability cost and experience. */
 int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int fatigue, int aqua, int unbreaking,
-          int on_ground, const double *eye, const double *look, int32_t *out) {
+          int fortune, int silk, int on_ground, const double *eye, const double *look, int32_t *out) {
     static const double FATIGUE[4] = {0.3, 0.09, 0.0027, 0.00081};
     Arena *a = p;
     Seat *s = &a->seats[seat];
@@ -1659,10 +2003,16 @@ int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int 
         drop_cell = (uint16_t)(c & ~(1 << 12));
     }
     set_cell(a, h.x, h.y, h.z, logged(c) ? mk_fluid(B_WATER, 8, 0) : (uint16_t)B_AIR);
-    if (harvest) drop_items(a, h.x, h.y, h.z, drop_cell);
+    int xp = 0;
+    if (harvest) {
+        int keep = (silk && tool > 0) || (tool == TOOL_SHEARS && (id == B_OAK_LEAVES || id == B_COBWEB));
+        drop_items(a, h.x, h.y, h.z, drop_cell, fortune, keep);
+        if (!keep && XP_MAX[id] > 0) xp = XP_MIN[id] + rnd_below(a, XP_MAX[id] - XP_MIN[id] + 1);
+        s->xp += xp;
+    }
     int units = (hard > 0 && tool > 0) ? (tool == TOOL_SWORD ? 2 : 1) : 0, cost = 0;
     for (int u = 0; u < units; u++) if (unbreaking <= 0 || rnd_below(a, 1 + unbreaking) == 0) cost++;
-    if (out) { out[0] = h.x; out[1] = h.y; out[2] = h.z; out[3] = id; out[4] = harvest; out[5] = cost; }
+    if (out) { out[0] = h.x; out[1] = h.y; out[2] = h.z; out[3] = id; out[4] = harvest; out[5] = cost; out[6] = xp; }
     return 1;
 }
 
@@ -1671,7 +2021,7 @@ void dig_many(void **arenas, int n, int seats, const uint8_t *act, const int32_t
     for (int i = 0; i < n; i++) for (int s = 0; s < seats; s++) {
         int k = i * seats + s;
         if (!act[k]) { w_dig_stop(arenas[i], s); codes[k] = 0; continue; }
-        codes[k] = w_dig(arenas[i], s, tool[k], tier[k], 0, 0, 0, 0, 0, on_ground[k], eye + 3 * k, look + 3 * k, out + 6 * k);
+        codes[k] = w_dig(arenas[i], s, tool[k], tier[k], 0, 0, 0, 0, 0, 0, 0, on_ground[k], eye + 3 * k, look + 3 * k, out + 7 * k);
     }
 }
 

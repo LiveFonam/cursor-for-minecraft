@@ -322,6 +322,17 @@ class Combat:
             self.weapon_sharpness[env, seat, C.SWORD] = 0.0
             self._uniform_speed = False
 
+    def wear_axe(self, env: int, seat: int, cost: int) -> None:
+        """Spend axe durability on a block broken with it."""
+        if cost <= 0 or self.weapon_left[env, seat, C.AXE] <= 0:
+            return
+        self.weapon_left[env, seat, C.AXE] -= cost
+        if self.weapon_left[env, seat, C.AXE] <= 0:
+            self.weapon_damage[env, seat, C.AXE] = I.FIST_DAMAGE
+            self.weapon_speed[env, seat, C.AXE] = I.FIST_SPEED
+            self.weapon_sharpness[env, seat, C.AXE] = 0.0
+            self._uniform_speed = False
+
     def wake_server_copy(self) -> None:
         """Mark the server copy as moving."""
         self._copy_sliding = True
@@ -698,12 +709,12 @@ class Combat:
             vel[..., 0] = vx * drag
             vel[..., 2] = vz * drag
             self._copy_sliding = bool(moving.any())
-        flat_vanilla = self.sim.body.cfg.vanilla and self.sim.world is None
-        if flat_vanilla:
-            reaches_floor = self.sim.body._before[..., 1] + vy <= 1e-9
+        lift_rule = self.sim.body.cfg.vanilla
+        if lift_rule:
+            reaches_floor = self._copy_reaches_floor(vy, body, was_ground)
             settled = (was_ground & (vy <= 0.0)) | (body & reaches_floor & (vy < 0.0))
         y = np.where(settled, 0.0, vy)
-        if flat_vanilla:
+        if lift_rule:
             lifted = was_ground & self._was_ground & ~body & (self.sim.body.moved_y > 0.0)
             late = jumped & self._was_still
             due = (lifted & ~late) | self._lift_pending
@@ -719,6 +730,24 @@ class Combat:
             settled = settled & ~jumped
         vel[..., 1] = (y - C.GRAVITY) * C.VERTICAL_DRAG
         self.server_ground = settled & body
+
+    def _copy_reaches_floor(self, vy: np.ndarray, body: np.ndarray, was_ground: np.ndarray) -> np.ndarray:
+        """Return where the previous client height plus the copy's speed reaches the ground below.
+
+        In a world only a body that has just landed needs the query.
+        """
+        sim = self.sim
+        before = sim.body._before
+        if sim.world is None:
+            return before[..., 1] + vy <= 1e-9
+        wanted = body & ~was_ground & (vy < 0.0)
+        if not wanted.any():
+            return wanted
+        delta = np.zeros_like(before)
+        delta[..., 1] = np.where(wanted, vy - 1e-9, 0.0)
+        width = np.full(wanted.shape, C.PLAYER_WIDTH)
+        _pos, _contact, ground = sim.world.collide_many(before, delta, width, sim.body.heights())
+        return ground & wanted
 
     def _world_contacts(self) -> tuple[np.ndarray, np.ndarray]:
         sim = self.sim
