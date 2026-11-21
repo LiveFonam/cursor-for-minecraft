@@ -24,6 +24,14 @@ test('only age 7 wheat counts as ripe', () => {
   assert.equal(isMature(bot.blockAt(new Vec3(1, 64, 2))), false)
 })
 
+test('reads ripeness from real block state objects', () => {
+  const realRegistry = require('prismarine-registry')('1.21.4')
+  const Block = require('prismarine-block')(realRegistry)
+  const wheat = realRegistry.blocksByName.wheat
+  assert.equal(isMature(Block.fromStateId(wheat.minStateId + 7, 0)), true)
+  assert.equal(isMature(Block.fromStateId(wheat.minStateId + 6, 0)), false)
+})
+
 test('harvests ripe wheat, leaves young wheat and replants', async () => {
   const bot = createMockBot()
   field(bot, [7, 3, 7])

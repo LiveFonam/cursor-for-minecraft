@@ -53,6 +53,7 @@ test('refuses to dig next to lava or water', () => {
   assert.equal(isSafeToDig(bot, bot.blockAt(ore)), true)
   bot.setBlock(ore.offset(0, 1, 0), 'lava')
   assert.equal(isSafeToDig(bot, bot.blockAt(ore)), false)
+  assert.equal(isSafeToDig(bot, bot.blockAt(ore.offset(0, 1, 0))), false)
 })
 
 test('mines the requested count and keeps away from lava', async () => {

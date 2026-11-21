@@ -127,6 +127,20 @@ test('clears blocks that are in the way', async () => {
   assert.equal(bot.blockAt(new Vec3(1, 64, 0)).name, 'air')
 })
 
+test('places into water without trying to dig it', async () => {
+  const blueprint = { format: FORMAT, name: 'wet', palette: { '#': 'oak_planks' }, layers: [['#']] }
+  const bot = createMockBot({ items: { oak_planks: 1 }, position: new Vec3(0, 64, 2) })
+  bot.setBlock(new Vec3(0, 64, 0), 'water')
+  const place = bot.placeBlock
+  bot.placeBlock = async (reference, face) => {
+    bot.setBlock(reference.position.plus(face), 'air')
+    await place(reference, face)
+  }
+  const result = await buildBlueprint(bot, blueprint, new Vec3(0, 64, 0), { movements: {} })
+  assert.equal(result.failed, 0)
+  assert.equal(bot.calls.dug.length, 0)
+})
+
 test('reports cells it could not place', async () => {
   const blueprint = { format: FORMAT, name: 'float', palette: { '#': 'oak_planks' }, layers: [['_'], ['_'], ['#']] }
   const bot = createMockBot({ items: { oak_planks: 1 }, position: new Vec3(0, 64, 2) })

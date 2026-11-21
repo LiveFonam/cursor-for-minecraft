@@ -3,12 +3,22 @@
 const test = require('node:test')
 const assert = require('node:assert')
 const { Vec3 } = require('vec3')
-const { planCraft, readRecipe, craftItem, MissingItemsError } = require('../src/skills/craft')
+const { Recipe } = require('prismarine-recipe')(require('prismarine-registry')('1.21.4'))
+const { planCraft, readRecipe, matchesStep, craftItem, MissingItemsError } = require('../src/skills/craft')
 const { countItem } = require('../src/skills/inventory')
 const { createMockBot, registry } = require('./helpers/mock-bot')
 
 const id = name => registry.itemsByName[name].id
 const stock = items => new Map(Object.entries(items).map(([name, count]) => [id(name), count]))
+
+test('plan steps match the real recipe objects mineflayer uses', () => {
+  const plan = planCraft(registry, stock({ birch_planks: 3, stick: 2 }), id('wooden_pickaxe'), 1, { hasTable: true })
+  const step = plan.steps.at(-1)
+  const live = Recipe.find(step.id, null)
+  const matches = live.filter(recipe => matchesStep(recipe, step))
+  assert.equal(matches.length, 1)
+  assert.ok(matches[0].delta.some(entry => entry.id === id('birch_planks') && entry.count === -3))
+})
 
 test('reads shaped and shapeless recipes', () => {
   const pickaxe = readRecipe(registry.recipes[id('wooden_pickaxe')][0])
