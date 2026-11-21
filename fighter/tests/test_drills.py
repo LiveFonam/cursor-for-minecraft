@@ -3,6 +3,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from fighter import actions as A
 from fighter import constants as C
@@ -111,3 +112,38 @@ def test_training_saves_and_resumes(tmp_path):
     cfg.total_steps = first["steps"] + 512
     second = train(cfg, resume=True)
     assert second["steps"] >= first["steps"] + 512
+
+
+class SilentArcher(BlockingDrill):
+    def _opponent_actions(self):
+        return A.neutral_actions(np.full(self.num_envs, C.BOW))
+
+
+def shield_loop_reward(hold, rest):
+    env = SilentArcher(8, seed=3)
+    env.reset()
+    total = 0.0
+    for tick in range(300):
+        a = A.neutral_actions(env.sim.weapon[:, 0].copy())
+        a[:, A.USE] = hold > 0 and tick % (hold + rest) < hold
+        env.step_async(a)
+        _, reward, _, _ = env.step_wait()
+        total += float(reward.mean())
+    return total / 300
+
+
+@pytest.mark.parametrize("hold, rest", [(1, 1), (2, 1), (3, 1), (6, 1), (3, 3), (1, 0)])
+def test_shield_loops_earn_less_than_doing_nothing(hold, rest):
+    assert shield_loop_reward(hold, rest) < shield_loop_reward(0, 1)
+
+
+def test_drills_leave_out_the_widest_turns():
+    from fighter.drills import DRILL_MAX_PITCH, DRILL_MAX_YAW
+
+    for env in (ShootingDrill(4, seed=0), BlockingDrill(4, seed=0)):
+        mask = env.action_masks()
+        yaw = mask[:, A.HEAD_OFFSETS[A.YAW] : A.HEAD_OFFSETS[A.YAW] + A.NVEC[A.YAW]]
+        pitch = mask[:, A.HEAD_OFFSETS[A.PITCH] : A.HEAD_OFFSETS[A.PITCH] + A.NVEC[A.PITCH]]
+        assert not yaw[:, np.abs(A.YAW_DELTAS) > DRILL_MAX_YAW].any()
+        assert not pitch[:, np.abs(A.PITCH_DELTAS) > DRILL_MAX_PITCH].any()
+        assert yaw[:, A.NEUTRAL_YAW].all() and pitch[:, A.NEUTRAL_PITCH].all()

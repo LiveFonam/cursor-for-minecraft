@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from .env import ArenaVecEnv
+from .interface import Interface
 from .opponents import OpponentPool
 from .policy import NumpyPolicy
 from .sim import SimConfig
@@ -33,11 +34,15 @@ def play_matches(
     n_envs: int = 25,
     seed: int = HELD_OUT_SEED,
     deterministic: bool = False,
+    interface: Interface | None = None,
 ) -> dict:
-    """Play a fixed number of games in every arena and count the results."""
-    pool = OpponentPool(n_envs, seed=seed + 1, max_ticks=MAX_TICKS)
+    """Play a fixed number of games in every arena and count the results.
+
+    interface: the learner's inputs and masks, such as one with experts loaded.
+    """
+    pool = OpponentPool(n_envs, seed=seed + 1, max_ticks=MAX_TICKS, interface=interface)
     pool.set_mix({opponent: 1.0})
-    env = ArenaVecEnv(n_envs, pool, SimConfig(), max_ticks=MAX_TICKS, seed=seed)
+    env = ArenaVecEnv(n_envs, pool, SimConfig(), max_ticks=MAX_TICKS, seed=seed, interface=interface)
     rng = np.random.default_rng(seed + 2)
     obs = env.reset()
     played = np.zeros(n_envs, dtype=np.int64)

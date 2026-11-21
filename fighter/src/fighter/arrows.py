@@ -482,6 +482,18 @@ def aim_speed(sim, seat: int, at=slice(None)) -> np.ndarray:
     )
 
 
+def target_motion(sim, seat: int, at=slice(None)) -> np.ndarray:
+    """Return the motion to lead a player by.
+
+    `sim.vel` already has this tick's friction applied, so a walking player's
+    reads about 0.55 of its real speed. Sideways motion comes from the last tick
+    of movement, which is also what the game client tracks.
+    """
+    motion = sim.body.last_move[at, seat].copy()
+    motion[:, 1] = sim.vel[at, seat, 1]
+    return motion
+
+
 def intercept(
     sim, seat: int, speed: np.ndarray, lead: bool = True, rows: np.ndarray | None = None, seen=None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -507,7 +519,7 @@ def intercept(
     carry_y = moved[:, 1] * (bow & ~sim.on_ground[at, seat])
     carry_z = moved[:, 2] * bow
     target = sim.pos[at, other] if seen is None else seen[0]
-    target_vel = sim.vel[at, other] if seen is None else seen[1]
+    target_vel = target_motion(sim, other, at) if seen is None else seen[1]
     to_x = target[:, 0]
     to_y = target[:, 1]
     to_z = target[:, 2]

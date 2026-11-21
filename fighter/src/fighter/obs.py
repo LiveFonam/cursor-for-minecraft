@@ -234,7 +234,7 @@ def _lead_slots(sim: Sim, seat: int, at, rows, yaw, pitch, sight, obs: np.ndarra
     seen = None
     if sim.world is not None:
         visible = sight.visible
-        velocity = np.where(visible[:, None], sim.vel[at, 1 - seat], sight.move)
+        velocity = np.where(visible[:, None], arrows.target_motion(sim, 1 - seat, at), sight.move)
         seen = (sight.pos, velocity, visible)
     lead_yaw, lead_pitch, flight = arrows.intercept(sim, seat, speed, rows=rows, seen=seen)
     yaw_error = wrap_degrees(yaw - lead_yaw)

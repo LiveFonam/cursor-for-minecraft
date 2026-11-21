@@ -123,6 +123,9 @@ shrinks in later stages.
 
 Each drill trains from random weights and has a pass test on held-out seeds.
 
+A drill trains for up to 2 million decisions, scores the policy every 100,000 and stops at
+the first pass. Drills allow turn steps up to 45 degrees of yaw and 20 of pitch.
+
 Shooting. The policy stands still with a bow or crossbow while a target runs around it. To
 pass, it must hit at least 50% of its shots with each weapon and beat a scripted shooter that
 aims without lead by at least 10 points.

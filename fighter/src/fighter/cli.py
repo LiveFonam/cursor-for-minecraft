@@ -86,6 +86,12 @@ def evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def campaign(args: argparse.Namespace) -> int:
+    from .campaign import main as campaign_main
+
+    return campaign_main(args.rest)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fighter", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -110,8 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("drill", help="train a skill drill and run its pass test")
     p.add_argument("name", choices=["shooting", "blocking"])
     p.add_argument("--out", default=None)
-    p.add_argument("--steps", type=int, default=400_000)
-    p.add_argument("--max-minutes", type=float, default=9.0)
+    p.add_argument("--steps", type=int, default=2_000_000)
+    p.add_argument("--max-minutes", type=float, default=30.0)
     p.add_argument("--seed", type=int, default=11)
     p.set_defaults(run=drill)
 
@@ -122,6 +128,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deterministic", action="store_true")
     p.add_argument("--drill", choices=["shooting", "blocking"], default=None)
     p.set_defaults(run=evaluate)
+
+    p = commands.add_parser("campaign", help="train the experts and the fighter together, see `campaign -h`")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    p.set_defaults(run=campaign)
     return parser
 
 

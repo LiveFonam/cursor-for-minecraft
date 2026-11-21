@@ -137,6 +137,7 @@ def test_intercept_aim_hits_a_moving_target():
         sim.pos[0, 0] = [0.0, 0.0, -6.0]
         sim.pos[0, 1] = [-3.0, 0.0, 4.0]
         sim.vel[0, 1] = [0.2, 0.0, 0.0]
+        sim.body.last_move[0, 1] = [0.2, 0.0, 0.0]
         sim.weapon[0, 0] = C.BOW
         sim.draw_ticks[0, 0] = C.BOW_FULL_DRAW_TICKS
         yaw, pitch, _ = intercept_angles(sim, 0, np.array([C.BOW_MAX_SPEED]))
