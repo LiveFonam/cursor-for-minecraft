@@ -1,0 +1,14 @@
+name: MobDirector
+version: 0.1.0
+main: cursor.director.DirectorPlugin
+api-version: '1.21'
+description: Invisible hostile mob director for the crew server (see director/README.md)
+commands:
+  director:
+    description: Start, stop or show the hostile mob director
+    usage: /director start <player> | stop | status [json] | reload
+    permission: mob.director
+permissions:
+  mob.director:
+    description: Run the mob director
+    default: op
