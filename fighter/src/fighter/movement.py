@@ -32,6 +32,10 @@ TINY_HORIZONTAL_SQ = 9.0e-6
 MINOR_WALL_COSINE = float(np.cos(0.13962634))
 SPEED_PER_LEVEL = 0.2
 SPRINT_MIN_FOOD = 6
+SWIM_PULL = 0.06
+SWIM_PULL_DOWN = 0.085
+SWIM_PULL_DOWN_LOOK = -0.2
+SWIM_HEAD_PROBE = 0.9
 EDGE_STEP = 0.05
 EDGE_MAX_STEPS = 80
 
@@ -149,6 +153,8 @@ class Bodies:
         self.last_move = np.zeros((n, 2, 3))
         self._before = np.zeros((n, 2, 3))
         self.jumped = np.zeros(shape, dtype=bool)
+        self.eye_was_wet = np.zeros(shape, dtype=bool)
+        self.swimming = np.zeros(shape, dtype=bool)
         self._no_jump = np.zeros(shape, dtype=bool)
         self.pending = np.zeros((n, 2, 3))
         self.pending_ticks = np.zeros(shape, dtype=np.int64)
@@ -166,6 +172,8 @@ class Bodies:
         self.wall_block[idx] = False
         self.moved_y[idx] = 0.0
         self.last_move[idx] = 0.0
+        self.eye_was_wet[idx] = False
+        self.swimming[idx] = False
         self.pending_ticks[idx] = 0
 
     def heights(self) -> np.ndarray:
@@ -400,11 +408,33 @@ def _sprint_state(sim, a: np.ndarray, forward: np.ndarray, using: np.ndarray, se
     if sim.cfg.hunger and body.cfg.vanilla:
         key &= sim.combat.food > SPRINT_MIN_FOOD
     if sense is not None and sense.any_fluid:
-        key &= ~(sense.water & ~sense.eye_water)
+        under = (body.eye_was_wet if body.cfg.vanilla else sense.eye_water) & sense.water
+        key &= ~(sense.water & ~under)
     start = key & ~sim.sprint_held
     sim.sprinting = (sim.sprinting | start) & key
     sim.sprint_held = key
     return key if body.cfg.sprint_restart else sim.sprinting
+
+
+def _swim_pull(sim, jump: np.ndarray, sense: Sense, was_running: np.ndarray) -> None:
+    """Update the swimming state and pull a swimmer's vertical speed toward its look."""
+    body = sim.body
+    stay = body.swimming & was_running & sense.water
+    begin = ~body.swimming & was_running & body.eye_was_wet & sense.water
+    body.swimming = stay | begin
+    if not body.swimming.any():
+        return
+    look_y = -np.sin(np.radians(sim.pitch))
+    rate = np.where(look_y < SWIM_PULL_DOWN_LOOK, SWIM_PULL_DOWN, SWIM_PULL)
+    pull = body.swimming & ((look_y <= 0.0) | jump)
+    rising = body.swimming & ~pull
+    if rising.any():
+        head = sim.pos.copy()
+        head[..., 1] += SWIM_HEAD_PROBE
+        tiny = np.full_like(body.width, 1e-3)
+        wet = sim.world.fluid_box_many(head, tiny, tiny, tiny)
+        pull |= rising & (wet["in_water"] | wet["in_lava"])
+    sim.vel[..., 1] += np.where(pull, (look_y - sim.vel[..., 1]) * rate, 0.0)
 
 
 def _jump(
@@ -446,7 +476,10 @@ def _wall_stop(
     input_x: np.ndarray,
     input_z: np.ndarray,
 ) -> None:
-    """End the sprint of bodies that hit a wall more than 8 degrees off their input."""
+    """End the sprint of bodies that hit a wall more than 8 degrees off their input.
+
+    A swimmer keeps sprinting against a wall.
+    """
     stop = blocked.copy()
     wx = input_x[blocked]
     wz = input_z[blocked]
@@ -456,6 +489,7 @@ def _wall_stop(
     moved = mx * mx + mz * mz
     aligned = wx * mx + wz * mz > MINOR_WALL_COSINE * np.sqrt(wish * moved)
     stop[blocked] = ~((wish >= 1e-5) & (moved >= 1e-5) & aligned)
+    stop &= ~sim.body.swimming
     sim.body.wall_block = stop
     sim.sprinting &= ~stop
 
@@ -652,6 +686,7 @@ def move_bodies(sim, a: np.ndarray, using: np.ndarray) -> None:
     forward_index = a[..., A.FORWARD]
     strafe_index = a[..., A.STRAFE]
     forward = A.FORWARD_VALUES[forward_index]
+    was_running = sim.sprint_held.copy()
     run = _sprint_state(sim, a, forward, using, sense)
 
     if body.speed_level.any():
@@ -680,6 +715,12 @@ def move_bodies(sim, a: np.ndarray, using: np.ndarray) -> None:
     sim.vel[..., 0] += input_x * accel
     sim.vel[..., 2] += input_z * accel
     _jump(sim, a[..., A.JUMP] == 1, grounded, run, sin_y, cos_y, sense)
+    if sense is not None and sense.any_fluid and body.cfg.vanilla:
+        _swim_pull(sim, a[..., A.JUMP] == 1, sense, was_running)
+        body.eye_was_wet = sense.eye_water.copy()
+    elif body.eye_was_wet.any() or body.swimming.any():
+        body.eye_was_wet = np.zeros_like(body.eye_was_wet)
+        body.swimming = np.zeros_like(body.swimming)
 
     np.copyto(body._before, sim.pos)
     if sense is None:

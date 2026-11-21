@@ -430,7 +430,8 @@ class Combat:
             hit = lands[:, attacker] & ~guarded
             if not hit.any():
                 continue
-            dealt = self._strike(hit, attacker, victim, raw[:, attacker], sprint_hit[:, attacker])
+            running = charged[:, attacker] & (sim.sprint_held[:, attacker] | sim.sprinting[:, attacker])
+            dealt = self._strike(hit, attacker, victim, raw[:, attacker], sprint_hit[:, attacker], running)
             events["damage_dealt"][:, attacker] += dealt
             events["damage_taken"][:, victim] += dealt
             events["followup_damage"][:, attacker] += dealt * (sim.followup[:, attacker] > 0)
@@ -480,8 +481,19 @@ class Combat:
             sim.shield_ticks[gone, victim] = 0
 
     def _strike(
-        self, mask: np.ndarray, attacker: int, victim: int, raw: np.ndarray, sprint: np.ndarray
+        self,
+        mask: np.ndarray,
+        attacker: int,
+        victim: int,
+        raw: np.ndarray,
+        sprint: np.ndarray,
+        running: np.ndarray,
     ) -> np.ndarray:
+        """Land a hit. `sprint` is the server's sprint hit and `running` the client's own.
+
+        The server clears its flag on a sprint hit, while a held key keeps the client
+        sprinting. Every later charged hit slows that client without any sprint knockback.
+        """
         sim = self.sim
         closed = sim.hurt_timer[:, victim] == 0
         dealt = self.hurt(mask, victim, raw, kind=I.MELEE)
@@ -494,11 +506,11 @@ class Combat:
         if fresh.any():
             self._push(idx[fresh], attacker, victim, sprint[idx[fresh]], level[fresh])
         if sprint[idx].any():
-            pushed = idx[sprint[idx]]
-            sim.sprinting[pushed, attacker] = False
-            if sim.cfg.client_model == "vanilla":
-                sim.vel[pushed, attacker, 0] *= C.ATTACKER_SLOWDOWN
-                sim.vel[pushed, attacker, 2] *= C.ATTACKER_SLOWDOWN
+            sim.sprinting[idx[sprint[idx]], attacker] = False
+        if sim.cfg.client_model == "vanilla" and running[idx].any():
+            slowed = idx[running[idx]]
+            sim.vel[slowed, attacker, 0] *= C.ATTACKER_SLOWDOWN
+            sim.vel[slowed, attacker, 2] *= C.ATTACKER_SLOWDOWN
         aspect = self._t_fire_aspect[kit]
         if aspect.any():
             lit = aspect > 0

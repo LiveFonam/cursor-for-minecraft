@@ -72,7 +72,7 @@ reason for each one, and with the wiki figure they were checked against when the
 | Hit charge for crits | charge must be above 0.9 | Matches the 84.8% damage multiplier on the wiki. |
 | Diagonal movement | input is scaled to length 1 | Not stated on the pages read. |
 | Item use slowdown | input times 0.2 | Gives 0.863 m/s while a shield, bow or crossbow is in use. |
-| Sprint restart | a held key keeps the body running after a sprint hit, and the next sprint hit needs a new press | The server clears its sprint flag on the hit and sets it again only when the client starts a new sprint. `MoveConfig.sprint_restart` turns the running part off. |
+| Sprint restart | a held key keeps the body running after a sprint hit, and the next sprint hit needs a new press | The server clears its sprint flag on the hit and sets it again only when the client starts a new sprint. Each later charged hit still slows the running client by 0.6, with no sprint knockback. `MoveConfig.sprint_restart` turns the running part off. |
 | Knockback inside the hurt window | only the hit that opens the window pushes | Matches recorded hits at every gap from 1 to 12 ticks. |
 | Player collision | overlapping boxes push apart by 0.05, scaled by the larger axis offset | Applied after drag. |
 | Arrow launch | no random spread and no inherited shooter speed | A simplification. |
@@ -104,6 +104,8 @@ replays real server recordings stored in `tests/data/recorded_combat.json`.
 | Server velocity | Each player has a server copy that knockback starts from. A player hit restores it afterward |
 | Server copy lift-off | In `arena` with the vanilla client, a key jump from standing reaches the copy 2 ticks later, and a knockback lift or a jump right after landing reaches it after 1 tick. The copy takes 0.42 with no gravity step on that tick. `surface` and `full` apply a jump to the copy on its own tick |
 | Sprint and items | On the vanilla client a running sprint continues through item use, and item use blocks a new sprint start |
+| Sprint in water | Starting a sprint needs the eye under water on the previous tick. A swimmer keeps sprinting against a wall and its vertical speed is pulled toward its look |
+| Crossbow reload | After a shot, loading can start 4 ticks later, with the key held or pressed again |
 | Sprint and food | With hunger on, the vanilla client needs more than 6 food to sprint |
 | Sneak timing | Box and eye height change with the key. The vanilla slowdown starts one tick later |
 | Blocked hit | Pulls the server copy 0.5 toward the attacker, pushes it 0.4 away, and opens the hurt window with stored damage 0 |
@@ -111,6 +113,9 @@ replays real server recordings stored in `tests/data/recorded_combat.json`.
 | Crit | Charge above 0.9, fall distance above 0, off the ground, not sprinting, not in water or a web |
 | Damage order | Weapon and Strength, charge, crit, Sharpness, hurt window, armor, Protection, absorption, health |
 | Protection | 4% a point, at most 20 points |
+| Thrown pearl and potion | Start 0.1 under the eye and first move on the next tick. Each tick applies gravity, then drag, then moves |
+| Break delay | 5 ticks after a slow break, counted only on ticks spent digging at a block. A block that breaks at once ignores it |
+| Shallow current | Below 0.4 blocks of fluid, the push is scaled by the depth |
 | Fall damage | floor(distance - 3), ignoring armor |
 | Lava | 4 damage through armor, burning for 300 ticks |
 | Fire block | 1 damage, burning for 160 ticks once the fire count reaches 0 |

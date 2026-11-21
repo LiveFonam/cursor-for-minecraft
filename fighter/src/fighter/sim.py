@@ -178,6 +178,8 @@ class Sim:
         self.load_ticks = np.zeros((n, 2), dtype=np.int64)
         self.loaded = np.zeros((n, 2), dtype=bool)
         self.load_wait = np.zeros((n, 2), dtype=bool)
+        self.reload_delay = np.zeros((n, 2), dtype=np.int64)
+        self._shot_wait = np.zeros((n, 2), dtype=bool)
         self.use_prev = np.zeros((n, 2), dtype=bool)
         self.followup = np.zeros((n, 2), dtype=np.int64)
         arrows.init_state(self)
@@ -296,6 +298,8 @@ class Sim:
         self.load_ticks[idx] = 0
         self.loaded[idx] = False
         self.load_wait[idx] = False
+        self.reload_delay[idx] = 0
+        self._shot_wait[idx] = False
         self.use_prev[idx] = False
         self.followup[idx] = 0
         arrows.reset_state(self, idx)
@@ -547,8 +551,15 @@ class Sim:
             arrows.fire(self, shoot, np.full(shoot.shape, C.CROSSBOW_SPEED), np.ones(shoot.shape, bool))
             self.loaded[shoot] = False
             self.load_wait[shoot] = True
+            self._shot_wait[shoot] = True
+            self.reload_delay[shoot] = C.CROSSBOW_RELOAD_DELAY
         self.load_wait &= use
-        loading = holding_crossbow & use & ~self.loaded & ~self.load_wait & (self.ammo > 0)
+        ready = self._shot_wait & (self.reload_delay == 0)
+        self.load_wait &= ~ready
+        self._shot_wait &= ~ready & self.load_wait
+        loading = (
+            holding_crossbow & use & ~self.loaded & ~self.load_wait & (self.reload_delay == 0) & (self.ammo > 0)
+        )
         self.load_ticks = np.where(loading, self.load_ticks + 1, 0)
         done = self.load_ticks >= C.CROSSBOW_LOAD_TICKS
         if done.any():
@@ -585,5 +596,6 @@ class Sim:
         self.attack_ticks += 1.0
         self.hurt_timer = np.maximum(self.hurt_timer - 1, 0)
         self.shield_disabled = np.maximum(self.shield_disabled - 1, 0)
+        self.reload_delay = np.maximum(self.reload_delay - 1, 0)
         self.followup = np.maximum(self.followup - 1, 0)
         self.ticks += 1

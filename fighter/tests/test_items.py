@@ -63,9 +63,7 @@ def test_pearl_flies_lands_teleports_and_hurts():
     sim.pitch[0, 0] = -10.0
     press(sim, I.PEARL)
     assert sim.items.count[0, 0, I.PEARL] == 1
-    assert sim.items.pearl_vel[0, 0] == pytest.approx(
-        I._look(0.0, -10.0) * I.PEARL_SPEED * I.PEARL_DRAG - np.array([0.0, I.PEARL_GRAVITY, 0.0])
-    )
+    assert sim.items.pearl_vel[0, 0] == pytest.approx(I._look(0.0, -10.0) * I.PEARL_SPEED)
     for _ in range(60):
         tick(sim)
         if not sim.items.pearl_on[0, 0]:

@@ -233,9 +233,9 @@ def test_delay_after_a_slow_break():
     eye = (16.5, Y + 2.5, 16.5)
     while world.dig(eye, DOWN)[0] != OK:
         world.tick(1)
-    for _ in range(6):
+    world.tick(40)
+    for _ in range(5):
         assert world.dig(eye, DOWN)[0] == -1
-        world.tick(1)
     assert world.dig(eye, DOWN)[0] == 0
 
 

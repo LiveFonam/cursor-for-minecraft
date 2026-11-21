@@ -65,6 +65,7 @@ PEARL_GRAVITY = 0.03
 PEARL_DRAG = 0.99
 PEARL_COOLDOWN = 20
 PEARL_DAMAGE = 5.0
+THROW_DROP = 0.1
 
 SPLASH_SPEED = 0.5
 SPLASH_PITCH_UP = 20.0
@@ -261,6 +262,10 @@ class Items:
         busy = np.zeros_like(self._idle)
         if self.ground_on.any():
             self._pick_up_ground_axe()
+        if self.pearl_on.any():
+            self._fly_pearls()
+        if self.splash_on.any():
+            self._fly_splashes()
         self.pearl_cooldown = np.maximum(self.pearl_cooldown - 1, 0)
         stopped = self.input != self._prev
         if stopped.any():
@@ -285,10 +290,6 @@ class Items:
             for env, seat in zip(*np.nonzero(released)):
                 self.sim.world.dig_stop(seat=int(seat), arena=int(env))
         self._digging = self.dig_input & (self.sim.world is not None)
-        if self.pearl_on.any():
-            self._fly_pearls()
-        if self.splash_on.any():
-            self._fly_splashes()
         if self.hook_on.any():
             self._fly_hooks()
         return busy
@@ -439,7 +440,7 @@ class Items:
         self.pearl_cooldown[env, seat] = PEARL_COOLDOWN
         self.pearl_on[env, seat] = True
         self._live = True
-        self.pearl_pos[env, seat] = self._eye(env, seat)
+        self.pearl_pos[env, seat] = self._eye(env, seat) - np.array([0.0, THROW_DROP, 0.0])
         self.pearl_vel[env, seat] = self._look_of(env, seat) * PEARL_SPEED
 
     def _throw_splash(self, env: int, seat: int, code: int) -> None:
@@ -449,7 +450,7 @@ class Items:
         self.splash_on[env, seat] = True
         self._live = True
         self.splash_kind[env, seat] = code - FIRST_SPLASH
-        self.splash_pos[env, seat] = self._eye(env, seat)
+        self.splash_pos[env, seat] = self._eye(env, seat) - np.array([0.0, THROW_DROP, 0.0])
         pitch = float(self.sim.pitch[env, seat]) - SPLASH_PITCH_UP
         self.splash_vel[env, seat] = _look(float(self.sim.yaw[env, seat]), pitch) * SPLASH_SPEED
 
@@ -532,6 +533,8 @@ class Items:
                 continue
             start = self.pearl_pos[idx, seat].copy()
             vel = self.pearl_vel[idx, seat].copy()
+            vel[:, 1] -= PEARL_GRAVITY
+            vel *= PEARL_DRAG
             stop = np.minimum(self._block_time(idx, start, vel), self._body_time(idx, seat, start, vel))
             landed = np.isfinite(stop)
             for k in np.flatnonzero(landed):
@@ -546,9 +549,7 @@ class Items:
             keep = ~landed
             kept = idx[keep]
             self.pearl_pos[kept, seat] = start[keep] + vel[keep]
-            moved = vel[keep] * PEARL_DRAG
-            moved[:, 1] -= PEARL_GRAVITY
-            self.pearl_vel[kept, seat] = moved
+            self.pearl_vel[kept, seat] = vel[keep]
 
     def _fly_splashes(self) -> None:
         for seat in (0, 1):
@@ -557,6 +558,8 @@ class Items:
                 continue
             start = self.splash_pos[idx, seat].copy()
             vel = self.splash_vel[idx, seat].copy()
+            vel[:, 1] -= SPLASH_GRAVITY
+            vel *= SPLASH_DRAG
             stop = np.minimum(self._block_time(idx, start, vel), self._body_time(idx, seat, start, vel))
             landed = np.isfinite(stop)
             for k in np.flatnonzero(landed):
@@ -567,9 +570,7 @@ class Items:
             keep = ~landed
             kept = idx[keep]
             self.splash_pos[kept, seat] = start[keep] + vel[keep]
-            moved = vel[keep] * SPLASH_DRAG
-            moved[:, 1] -= SPLASH_GRAVITY
-            self.splash_vel[kept, seat] = moved
+            self.splash_vel[kept, seat] = vel[keep]
 
     def _burst(self, env: int, at: np.ndarray, potion: int) -> None:
         combat = self.sim.combat

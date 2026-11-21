@@ -1059,7 +1059,7 @@ void fluid_box_many(void **arenas, int n, int seats, const double *pos, const do
         uint8_t f = 0;
         double dw = 0, dl = 0, sum[6] = {0, 0, 0, 0, 0, 0};
         int cw = 0, cl = 0;
-        for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) {
+        for (int x = x0; x <= x1; x++) for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) {
             uint16_t c = aget(a, x, y, z);
             int kind = fkind(c);
             if (!kind) continue;
@@ -1067,14 +1067,17 @@ void fluid_box_many(void **arenas, int n, int seats, const double *pos, const do
             if (top < lo_y) continue;
             double v[3];
             flow_vector(a, x, y, z, v);
+            /* A current weakens in proportion to the deepest fluid found so far, below 0.4. */
             if (kind == B_WATER) {
                 f |= 1; cw++;
                 if (top - lo_y > dw) dw = top - lo_y;
-                sum[0] += v[0]; sum[1] += v[1]; sum[2] += v[2];
+                double scale = dw < 0.4 ? dw : 1.0;
+                sum[0] += v[0] * scale; sum[1] += v[1] * scale; sum[2] += v[2] * scale;
             } else {
                 f |= 2; cl++;
                 if (top - lo_y > dl) dl = top - lo_y;
-                sum[3] += v[0]; sum[4] += v[1]; sum[5] += v[2];
+                double scale = dl < 0.4 ? dl : 1.0;
+                sum[3] += v[0] * scale; sum[4] += v[1] * scale; sum[5] += v[2] * scale;
             }
         }
         double ey = pos[3 * k + 1] + eye_height[k];
@@ -1390,7 +1393,6 @@ void w_tick(void *p, int n) {
         a->now++;
         for (int s = 0; s < SEATS; s++) {
             if (a->seats[s].use_cd > 0) a->seats[s].use_cd--;
-            if (a->seats[s].dig_delay > 0) a->seats[s].dig_delay--;
         }
         run_wheel(a, W_BLOCK);
         if (a->features & FEAT_FLUIDS) run_wheel(a, W_FLUID);
@@ -1602,7 +1604,7 @@ void place_many(void **arenas, int n, int seats, const int32_t *blocks, const ui
 
 /* ---------- Breaking ---------- */
 
-#define DIG_DELAY 6
+#define DIG_DELAY 5
 
 void w_dig_stop(void *p, int seat) {
     Seat *s = &((Arena *)p)->seats[seat];
@@ -1617,14 +1619,14 @@ int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int 
     static const double FATIGUE[4] = {0.3, 0.09, 0.0027, 0.00081};
     Arena *a = p;
     Seat *s = &a->seats[seat];
-    if (s->dig_delay > 0) return -1;
     Hit h = ray_block(a, eye, look, REACH, 0);
     if (!h.hit) { w_dig_stop(p, seat); return -2; }
     uint16_t c = aget(a, h.x, h.y, h.z);
     int id = c & 0xFF;
     double hard = HARDNESS[id];
     if (hard < 0) { w_dig_stop(p, seat); return -3; }
-    if (!s->digging || s->dx != h.x || s->dy != h.y || s->dz != h.z) {
+    int fresh = !s->digging || s->dx != h.x || s->dy != h.y || s->dz != h.z;
+    if (fresh) {
         s->digging = 1; s->dx = h.x; s->dy = h.y; s->dz = h.z; s->progress = 0.0;
     }
     int match = tool > 0 && ((TOOLS[id] >> tool) & 1);
@@ -1640,9 +1642,12 @@ int w_dig(void *p, int seat, int tool, int tier, int efficiency, int haste, int 
     if (fkind(ec) == B_WATER && eye[1] < ey + fluid_height(a, ex, ey, ez, ec) && !aqua) speed *= 0.2;
     if (!on_ground) speed /= 5.0;
     int harvest = !(FLAGS[id] & F_NEEDS_TOOL) || (match && TIER_RANK[tier] >= MIN_RANK[id]);
+    double step = hard == 0.0 ? 1.0 : speed / hard / (harvest ? 30.0 : 100.0);
+    /* The delay after a break runs down only on ticks spent digging at a block.
+       A block that breaks on its first tick ignores it. */
+    if (s->dig_delay > 0 && !(fresh && step >= 1.0 - 1e-9)) { s->dig_delay--; return -1; }
     int first = s->progress == 0.0;
-    if (hard == 0.0) s->progress = 1.0;
-    else s->progress += speed / hard / (harvest ? 30.0 : 100.0);
+    s->progress = hard == 0.0 ? 1.0 : s->progress + step;
     if (s->progress < 1.0 - 1e-9) return 0;
     s->digging = 0;
     s->progress = 0.0;
