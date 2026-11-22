@@ -2,7 +2,6 @@
 //
 //   DEMO_PLAYER          the one player who may drive the demo (falls back to the agents' owner)
 //   DEMO_AGENT           the agent in the scene (falls back to the first configured bot)
-//   DEMO_DUMMY           the stand-in who receives the finished item (default Dummy)
 //   DEMO_FIGHTER_NAME    the login of the 1v1 fighter (default Fighter)
 //   DEMO_FIGHTER_RUN     the fighter network to load for the 1v1 (falls back to AGENTS_FIGHTER_RUN)
 //   DEMO_AGENT_RUN       the network the agent fights mobs with (falls back to DEMO_FIGHTER_RUN, then the agents' config)
@@ -50,7 +49,6 @@ function loadSettings (env = process.env, config = loadConfig({ env, ownerRequir
   const settings = {
     player: checkName('DEMO_PLAYER', player),
     agent: checkName('DEMO_AGENT', env.DEMO_AGENT || config.bots[0]),
-    dummy: checkName('DEMO_DUMMY', env.DEMO_DUMMY || 'Dummy'),
     fighterName: checkName('DEMO_FIGHTER_NAME', env.DEMO_FIGHTER_NAME || 'Fighter'),
     fighterRun: path.resolve(SOURCE_ROOT, run),
     agentRun: path.resolve(SOURCE_ROOT, env.DEMO_AGENT_RUN || run),
@@ -67,8 +65,8 @@ function loadSettings (env = process.env, config = loadConfig({ env, ownerRequir
     version: config.version,
     sourceRoot: SOURCE_ROOT
   }
-  const names = [settings.player, settings.agent, settings.dummy, settings.fighterName].map(n => n.toLowerCase())
-  if (new Set(names).size !== names.length) throw new Error('The player, agent, dummy and fighter need four different names')
+  const names = [settings.player, settings.agent, settings.fighterName].map(n => n.toLowerCase())
+  if (new Set(names).size !== names.length) throw new Error('The player, agent and fighter need three different names')
   return settings
 }
 

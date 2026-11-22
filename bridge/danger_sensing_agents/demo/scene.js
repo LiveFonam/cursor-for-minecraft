@@ -9,6 +9,7 @@ const ALSO_HOSTILE = Object.freeze(['zombie_nautilus'])
 const TAG_EVIL = 'demo_evil'
 const TAG_EVIL_CREEPER = 'demo_evil_creeper'
 const TAG_FORCED = 'demo_forced'
+const TAG_BODY = 'demo_body'
 const DEATHS = 'demo_deaths'
 
 const ARENA_Y = 100
@@ -22,6 +23,8 @@ const CLEAN_RADIUS = 64
 const CLEAR_HEIGHT = 12         // a whole oak, so no crown is left floating over the plot
 
 const PLACE_ON = '["yellow_concrete","black_concrete","stone_bricks","cobblestone"]'
+// What !chest puts in the base chest: a diamond pickaxe's diamonds and sticks, and the planks for a crafting table
+const CHEST_STOCK = Object.freeze([['diamond', 3], ['stick', 2], ['oak_planks', 4]])
 const FIGHT_KIT = Object.freeze([
   ['armor.head', 'diamond_helmet'], ['armor.chest', 'diamond_chestplate'], ['armor.legs', 'diamond_leggings'],
   ['armor.feet', 'diamond_boots'], ['hotbar.0', 'diamond_axe'], ['hotbar.1', 'diamond_sword'],
@@ -46,11 +49,15 @@ const GRIEF_RULES = Object.freeze(['gamerule mob_griefing true', 'gamerule mobGr
 
 const purgeCommands = names => names.map(n => `kill @e[type=minecraft:${n}]`)
 
-const spots = s => ({
-  player: { x: s.x, y: s.y, z: s.z },
-  dummy: { x: s.x + 2, y: s.y, z: s.z },
-  agent: { x: s.x + 5, y: s.y, z: s.z + 3 }
-})
+// Where everyone stands, all inside the base: he looks east at the agent, the agent looks back at him
+const spots = s => {
+  const b = baseOf(s)
+  return {
+    player: { x: b.x - 2, y: b.y, z: b.z },
+    hand: { x: b.x, y: b.y, z: b.z },       // where the agent comes back to, to hand the item over
+    agent: { x: b.x + 1, y: b.y, z: b.z }
+  }
+}
 const at = p => `${p.x} ${p.y} ${p.z}`
 const middleOf = p => `${p.x + 0.5} ${p.y} ${p.z + 0.5}`
 const baseOf = s => ({ x: s.x - BASE_WEST, y: s.y, z: s.z })
@@ -76,7 +83,7 @@ function clearBaseCommands (s) {
   return [box(b.y, b.y + CLEAR_HEIGHT, 'air'), box(b.y - 4, b.y - 2, 'dirt', ' replace air'), box(b.y - 1, b.y - 1, 'grass_block', ' replace air')]
 }
 
-function resetCommands (settings, stage, { baseBuilt = false } = {}) {
+function resetCommands (settings, stage, { stocked = false } = {}) {
   const p = spots(stage)
   const near = `x=${stage.x},y=${stage.y},z=${stage.z},distance=..${CLEAN_RADIUS}`
   return [
@@ -84,21 +91,67 @@ function resetCommands (settings, stage, { baseBuilt = false } = {}) {
     'weather clear',
     `kill @e[tag=${TAG_EVIL}]`,
     `kill @e[tag=${TAG_FORCED}]`,
+    REMOVE_BODY,
     ...KEEP_HOSTILE.map(n => `kill @e[type=minecraft:${n},${near}]`),
-    ...(baseBuilt ? clearBaseCommands(stage) : []),
-    `fill ${stage.x - 1} ${stage.y} ${stage.z - 1} ${stage.x + 7} ${stage.y + CLEAR_HEIGHT} ${stage.z + 5} air`,
+    ...baseCommands(stage),
+    ...(stocked ? stockCommands(stage) : []),
     `kill @e[type=minecraft:item,${near}]`,
     `kill @e[type=minecraft:experience_orb,${near}]`,
     `kill @e[type=minecraft:arrow,${near}]`,
-    `gamemode creative ${settings.dummy}`,
-    `clear ${settings.dummy}`,
-    `tp ${settings.dummy} ${middleOf(p.dummy)} -90 0`,
     `gamemode survival ${settings.agent}`,
     ...agentKitCommands(settings.agent),
     `tp ${settings.agent} ${middleOf(p.agent)} 90 0`,
     `gamemode creative ${settings.player}`,
     `tp ${settings.player} ${middleOf(p.player)} -90 0`
   ]
+}
+
+// His body, left standing where he was while he spectates. A display entity, not a login: nothing hurts or pushes it
+function bodyCommand (name, p, yaw) {
+  return `summon minecraft:mannequin ${p.x} ${p.y} ${p.z} {Tags:["${TAG_BODY}"],NoGravity:1b,Invulnerable:1b,immovable:1b,hide_description:1b,Rotation:[${yaw}f,0f],profile:{name:"${name}"}}`
+}
+const REMOVE_BODY = `kill @e[tag=${TAG_BODY}]`
+
+// The yaw that looks from p at the agent's start spot
+function yawToAgent (stage, p) {
+  const a = spots(stage).agent
+  return Math.round(Math.atan2(-(a.x + 0.5 - p.x), a.z + 0.5 - p.z) * 180 / Math.PI) + 0
+}
+
+// The base as data, for anything that needs to know where its parts are
+function baseLayout (stage) {
+  const { x, y, z } = baseOf(stage)
+  return {
+    center: { x, y, z },
+    half: BASE_HALF,
+    wallTop: y + WALL_HEIGHT - 1,
+    bed: [{ x: x - 2, y, z: z - 2 }, { x: x - 1, y, z: z - 2 }],
+    chest: { x: x + 2, y, z: z - 2 },
+    furnace: { x: x + 2, y, z: z + 2 },
+    opening: { from: { x: x - 1, y, z: z + BASE_HALF }, to: { x, y: y + 1, z: z + BASE_HALF } },
+    ...spots(stage)
+  }
+}
+
+// The gap in the south wall the agent walks out of
+function openingCommand (stage, block) {
+  const { from, to } = baseLayout(stage).opening
+  return `fill ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} ${block}`
+}
+
+// !evil closes the gap, so the creeper has a wall to breach
+const sealCommands = stage => [openingCommand(stage, 'cobblestone')]
+
+function stockCommands (stage) {
+  const c = baseLayout(stage).chest
+  return CHEST_STOCK.map(([item, n], i) => `item replace block ${c.x} ${c.y} ${c.z} container.${i} with minecraft:${item} ${n}`)
+}
+
+// Kept loaded, so the base can be reset and stocked wherever the player and the agent have gone
+function baseChunks (stage) {
+  const { x, z } = baseOf(stage)
+  const r = BASE_HALF + 3
+  return `${x - r} ${z - r} ${x + r} ${z + r}`
 }
 
 function baseCommands (stage) {
@@ -111,6 +164,7 @@ function baseCommands (stage) {
     `fill ${x - h} ${y} ${z + h} ${x + h} ${top} ${z + h} cobblestone`,
     `fill ${x - h} ${y} ${z - h} ${x - h} ${top} ${z + h} cobblestone`,
     `fill ${x + h} ${y} ${z - h} ${x + h} ${top} ${z + h} cobblestone`,
+    openingCommand(stage, 'air'),
     `setblock ${x - 2} ${y} ${z - 2} red_bed[facing=east,part=foot]`,
     `setblock ${x - 1} ${y} ${z - 2} red_bed[facing=east,part=head]`,
     `setblock ${x + 2} ${y} ${z - 2} chest[facing=south]`,
@@ -118,9 +172,17 @@ function baseCommands (stage) {
   ]
 }
 
+// The demo's zombies carry a wooden axe, which they keep when they die
+const ZOMBIE_GEAR = ',equipment:{mainhand:{id:"minecraft:wooden_axe",count:1}},drop_chances:{mainhand:0.0f}'
+
 function summonCommand (kind, p, tags) {
   const list = tags.map(t => `"${t}"`).join(',')
-  return `summon minecraft:${kind} ${p.x} ${p.y} ${p.z} {Tags:[${list}],PersistenceRequired:1b}`
+  return `summon minecraft:${kind} ${p.x} ${p.y} ${p.z} {Tags:[${list}],PersistenceRequired:1b${kind === 'zombie' ? ZOMBIE_GEAR : ''}}`
+}
+
+// The agent back on its spot in the base, facing the player
+function agentHomeCommand (name, stage) {
+  return `tp ${name} ${middleOf(spots(stage).agent)} 90 0`
 }
 
 // sunlight would burn the zombies before they do anything
@@ -221,8 +283,9 @@ const parseScore = reply => {
 }
 
 module.exports = {
+  TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands,
   WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT,
   hostileToRemove, purgeCommands, spots, at, baseOf, arenaOf, agentKitCommands, resetCommands, baseCommands,
   creeperCommands, zombieCommands, igniteCommands, arenaCommands, arenaChunks, fighterKitCommands, duelSpots, openSpot, forcedCommands,
-  parseScore
+  parseScore, summonCommand, agentHomeCommand
 }

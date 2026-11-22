@@ -11,19 +11,33 @@ from .stance import StanceRules
 from .train import AXE_ONLY, CURRICULUM, Stage
 
 AXE_CROSSBOW = (C.AXE, C.CROSSBOW)
+AXE_SWORD_CROSSBOW = (C.AXE, C.SWORD, C.CROSSBOW)
 FOUNDATION_REWARD = {"weak_swing": 0.002, "exact_miss": True}
 COMBO_REWARD = {**FOUNDATION_REWARD, "followup": 1.5, "followup_unfaded": True, "crit": 0.15}
+SPACED_REWARD = {
+    **COMBO_REWARD,
+    "crit": 0.4,
+    "clean_shot": 0.3,
+    "blocked_shot": 0.15,
+    "load_range": 7.0,
+    "timeout_cost": 0.5,
+}
+SPACED_MUTABLE = ("crit", "clean_shot", "blocked_shot", "load_range", "timeout_cost", "shield_break", "followup")
 
 
 @dataclass(frozen=True)
 class Plan:
-    """stages, reward overrides, scripted rules, charge input gate and adaptive final mix."""
+    """stages, reward overrides, scripted rules, charge input gate, adaptive final mix and evolvable weights.
+
+    mutable: the reward weights an evolution may change, or None for its full list.
+    """
 
     stages: tuple[Stage, ...]
     reward: dict = field(default_factory=dict)
     stance: StanceRules | None = None
     ready_gate: float = C.FULL_CHARGE_THRESHOLD
     adaptive: bool = False
+    mutable: tuple[str, ...] | None = None
 
 
 FOUNDATION_STAGES = tuple(
@@ -76,10 +90,22 @@ COMBO_STAGES = (
         AXE_CROSSBOW,
     ),
 )
+SPACED_STAGES = tuple(
+    replace(stage, weapons=AXE_SWORD_CROSSBOW if stage.weapons == AXE_CROSSBOW else stage.weapons)
+    for stage in COMBO_STAGES
+)
 PLANS = {
     "melee": Plan(tuple(CURRICULUM)),
     "foundations": Plan(FOUNDATION_STAGES, FOUNDATION_REWARD, StanceRules(), CHARGE_GATE),
     "combo": Plan(COMBO_STAGES, COMBO_REWARD, StanceRules(followup=True), CHARGE_GATE, True),
+    "spaced_axe": Plan(
+        SPACED_STAGES,
+        SPACED_REWARD,
+        StanceRules(followup=True, sword_window=True),
+        CHARGE_GATE,
+        True,
+        SPACED_MUTABLE,
+    ),
 }
 ARENA_LEAGUE_WEIGHT = 4.0
 ARENA_HARD_WEIGHT = 2.0

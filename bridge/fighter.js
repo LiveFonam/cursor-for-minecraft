@@ -33,6 +33,20 @@ const CROSSBOW_RELOAD_DELAY = 4  // ticks after a shot before loading can start,
 const ATTACKER_SLOWDOWN = 0.6
 const CHARGED_HIT = 0.9
 const CROSSBOW_SPEED = 3.15
+// The crossbow and sword rules on the action mask (fighter/src/fighter/stance.py), and the swing charge they train with
+const PLAN_READY_GATE = 0.9
+const FLOOR_MARGIN = 1e-3
+const LOAD_ABORT_PROGRESS = 0.75
+const AXE_RULE_RANGE = 3.0
+const FAR_SHOT_RANGE = 6.0
+const JUST_DISABLED = 0.9
+const ENEMY_HURT_WINDOW = 0.2
+const INPUT_ENEMY_DISTANCE = 32
+const INPUT_ENEMY_IN_SIGHT = 38
+const INPUT_ENEMY_HURT = 46
+const INPUT_ENEMY_SHIELD_UP = 52
+const INPUT_ENEMY_SHIELD_DISABLED = 54
+const INPUT_ENEMY_FACING = 55
 const BOW_SPEED = 3.0
 const BOW_FULL_DRAW_TICKS = 20
 const BOW_MIN_DRAW_TICKS = 3
@@ -514,13 +528,16 @@ class EnemyView {
 
 class Fighter {
   // options: arena {x, y, z, half} for a known flat arena centered there, with its floor at y, and
-  // allowedWeapons, a set of weapon names. Without an arena the bot works from the blocks it has seen
+  // allowedWeapons, a set of weapon names. Without an arena the bot works from the blocks it has seen.
+  // planRules: the crossbow and sword rules on the action mask, on by default for a fighter in a known arena
   constructor (bot, enemyName, options = {}) {
     this.bot = bot
     this.enemy = new EnemyView(bot, enemyName)
     this.arena = options.arena ?? null
     this.borderHalf = options.arena?.half ?? 12
-    this.allowedWeapons = options.allowedWeapons ?? null
+    this.planRules = options.planRules ?? !!options.arena
+    this.readyGate = options.readyGate ?? (this.planRules ? PLAN_READY_GATE : FULL_CHARGE)
+    this.allowedWeapons = options.allowedWeapons ?? (this.planRules ? new Set(['axe', 'sword', 'crossbow']) : null)
     this.memory = new SeenBlocks(bot)
     this.fairHealth = false
     this.hpEst = new HealthEstimate()
@@ -599,6 +616,7 @@ class Fighter {
   // Everything that counts by ticks moves on here, once per client tick
   tick () {
     const me = this.bot.entity
+    this.lastObs = null
     this.ticks++
     this.ticksSinceSwing++
     this.ticksSinceHit++
@@ -806,7 +824,7 @@ class Fighter {
     const [fv, rv] = ego(vel.x, vel.z, yaw)
     const w = this.weapon()
     const charge = this.charge()
-    const ready = charge >= FULL_CHARGE
+    const ready = this.swingReady(charge)
     obs[0] = bot.health / MAX_HEALTH
     obs[1] = clamp(fv * 3, -3, 3)
     obs[2] = clamp(rv * 3, -3, 3)
@@ -925,7 +943,8 @@ class Fighter {
     const off = this.arena ? { x: me.position.x - this.arena.x, z: me.position.z - this.arena.z } : { x: 0, z: 0 }
     obs[128] = clamp((this.borderHalf - Math.max(Math.abs(off.x), Math.abs(off.z))) / BORDER_SCALE, 0, 1)
     obs[129] = e && hyp(e.position.x - me.position.x, e.position.z - me.position.z) <= TRACKING_RANGE ? 1 : 0
-    return obs.map(x => (Number.isFinite(x) ? x : 0))
+    this.lastObs = obs.map(x => (Number.isFinite(x) ? x : 0))
+    return this.lastObs
   }
 
   aimSpeed () {
@@ -943,9 +962,11 @@ class Fighter {
     const from = { x: me.position.x, y: me.position.y + this.eyeHeight() - SPAWN_BELOW_EYE, z: me.position.z }
     const carry = { x: bow ? this.lastMove.x : 0, y: bow && !me.onGround ? this.lastMove.y : 0, z: bow ? this.lastMove.z : 0 }
     const vel = sight.visible ? this.enemy.leadVel() : sight.move
-    const airborne = this.enemy.airborne() && sight.visible
-    const speed = this.aimSpeed()
     const a = this.arena
+    // Over a known floor a body is in the air whenever it is above it, even at the top of a jump where it barely moves
+    const inAir = a ? sight.pos.y > a.y + FLOOR_MARGIN : this.enemy.airborne()
+    const airborne = inAir && sight.visible
+    const speed = this.aimSpeed()
     const ground = airborne ? (a ? a.y : this.groundBelow(sight.pos)) : sight.pos.y
     const solved = intercept(from, sight.pos, vel, airborne, ground, speed, carry, a ?? { x: 0, z: 0 }, a ? a.half - PLAYER_W / 2 : Infinity)
     const loft = -rad(solved.pitch)
@@ -1069,13 +1090,94 @@ class Fighter {
       const ok = held[name] && (!this.allowedWeapons || this.allowedWeapons.has(name))
       mask[HEAD_OFFSETS[WEAPON] + i] = ok ? 1 : 0
     })
+    if (this.allowedWeapons && !this.allowedWeapons.has(w) && this.canSwitch(mask)) mask[HEAD_OFFSETS[WEAPON]] = 0
     mask[HEAD_OFFSETS[LOCK_AIM] + 1] = melee ? 0 : 1
     const known = this.sight.pos ?? me.position
     if (hyp(known.x - me.position.x, known.z - me.position.z) < FINE_TURN_RANGE) {
       FINE_YAW.forEach((fine, i) => { if (fine) mask[HEAD_OFFSETS[YAW] + i] = 0 })
       FINE_PITCH.forEach((fine, i) => { if (fine) mask[HEAD_OFFSETS[PITCH] + i] = 0 })
     }
+    if (this.planRules) this.applyPlanRules(mask)
     return mask
+  }
+
+  swingReady (charge) {
+    return charge >= (this.readyGate ?? FULL_CHARGE)
+  }
+
+  canSwitch (mask) {
+    return WEAPON_HEAD.some((_, i) => i > 0 && mask[HEAD_OFFSETS[WEAPON] + i] === 1)
+  }
+
+  // Whether the enemy's body is inside axe range of this bot's eye
+  axeInRuleRange () {
+    const e = this.enemy.entity()
+    if (!e) return false
+    const eye = this.eye()
+    const half = PLAYER_W / 2
+    const p = e.position
+    const dx = eye.x - clamp(eye.x, p.x - half, p.x + half)
+    const dy = eye.y - clamp(eye.y, p.y, p.y + PLAYER_H)
+    const dz = eye.z - clamp(eye.z, p.z - half, p.z + half)
+    return Math.hypot(dx, dy, dz) <= AXE_RULE_RANGE
+  }
+
+  // Load the crossbow first, fire it at clear targets, hold fire at a raised shield that faces this bot and in the
+  // enemy's hurt window, put it away inside axe range, and keep the sword for while the enemy's shield is disabled.
+  applyPlanRules (mask) {
+    const obs = this.lastObs ?? this.observe()
+    const at = HEAD_OFFSETS[WEAPON]
+    const axe = WEAPON_HEAD.indexOf('axe')
+    const sword = WEAPON_HEAD.indexOf('sword')
+    const crossbow = WEAPON_HEAD.indexOf('crossbow')
+    const fix = (h, choice) => {
+      mask.fill(0, HEAD_OFFSETS[h], HEAD_OFFSETS[h] + ACTION_DIMS[h])
+      mask[HEAD_OFFSETS[h] + choice] = 1
+    }
+    const w = this.weapon()
+    const holding = w === 'crossbow'
+    const canCrossbow = mask[at + crossbow] === 1
+    const canAxe = mask[at + axe] === 1
+    if (this.loaded || this.arrows <= 0 || !canCrossbow) this.openingLoad = false
+
+    const load = this.charging ? this.loadTicks : 0
+    const loading = this.openingLoad || load > 0
+    const abort = loading && this.hurtTimer > 0 && load / CROSSBOW_LOAD_TICKS < LOAD_ABORT_PROGRESS && canAxe
+    const carry = loading && !abort && canCrossbow
+    let followUp = false
+    if (abort) {
+      this.openingLoad = false
+      fix(WEAPON, axe)
+      fix(USE, 0)
+    } else if (carry) {
+      fix(WEAPON, crossbow)
+      fix(USE, 1)
+    } else if (this.loaded) {
+      const fresh = !this.useHeld
+      const seen = obs[INPUT_ENEMY_IN_SIGHT] > 0.5
+      const shield = obs[INPUT_ENEMY_SHIELD_UP] > 0.5
+      followUp = obs[INPUT_ENEMY_SHIELD_DISABLED] >= JUST_DISABLED
+      if (followUp) {
+        fix(WEAPON, crossbow)
+        fix(USE, holding && fresh ? 1 : 0)
+        if (holding && seen) fix(LOCK_AIM, 1)
+      } else {
+        const facing = shield && obs[INPUT_ENEMY_FACING] > 0
+        if (holding && fresh && (facing || obs[INPUT_ENEMY_HURT] > ENEMY_HURT_WINDOW)) fix(USE, 0)
+        if (obs[INPUT_ENEMY_DISTANCE] * 32 >= FAR_SHOT_RANGE && seen && !shield) {
+          fix(WEAPON, crossbow)
+          if (holding) fix(LOCK_AIM, 1)
+        }
+      }
+    }
+    if (!abort && !carry && !followUp && canAxe && this.axeInRuleRange()) {
+      mask[at + crossbow] = 0
+      if (holding) mask[at] = 0
+    }
+    if (!(this.enemy.shieldCooldown > 0)) {
+      mask[at + sword] = 0
+      if (w === 'sword' && this.canSwitch(mask)) mask[at] = 0
+    }
   }
 
   act (a) {
@@ -1321,6 +1423,8 @@ class Fighter {
   reset (stop = true) {
     if (stop) this.stopEverything()
     this.ticks = 0
+    this.lastObs = null
+    this.openingLoad = true
     this.shieldUp = false
     this.secondClick = false
     this.ticksSinceSwing = 1000

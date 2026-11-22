@@ -85,7 +85,7 @@ ELO_ROUNDS = 200
 MUTABLE = ("crit", "sprint_hit", "weak_swing", "shield_block", "shield_break", "followup", "aim", "spacing", "strafe", "best_range")
 CHANGE_LOW = 0.5
 CHANGE_HIGH = 2.0
-ABSOLUTE_LIMITS = {"best_range": (2.2, 3.0)}
+ABSOLUTE_LIMITS = {"best_range": (2.2, 3.0), "load_range": (5.0, 10.0)}
 POLL_SECONDS = 2.0
 STOP_WAIT_SECONDS = 600.0
 MEMORY_WAIT_SECONDS = 1800.0
@@ -159,6 +159,7 @@ class EvolveConfig:
     retest_games: int = 256
     retest_top: int = 2
     fight_setup: str = "standard"
+    plan: str | None = None
 
 
 @dataclass
@@ -461,8 +462,9 @@ def mutate_reward(
     reward = dict(current)
     changes: dict[str, list[float]] = {}
     if keys is None:
-        picks = rng.choice(len(MUTABLE), size=min(count, len(MUTABLE)), replace=False)
-        keys = tuple(MUTABLE[pick] for pick in sorted(int(item) for item in picks))
+        pool = PLANS[plan].mutable or MUTABLE
+        picks = rng.choice(len(pool), size=min(count, len(pool)), replace=False)
+        keys = tuple(pool[pick] for pick in sorted(int(item) for item in picks))
     for key in keys:
         old = float(reward.get(key, base[key]))
         low, high = ABSOLUTE_LIMITS.get(key, (CHANGE_LOW * base[key], CHANGE_HIGH * base[key]))
@@ -761,6 +763,8 @@ class Evolution:
         torch.save({"model": starting_weights(source)}, build / FIGHTER / "final.pt")
         write_json(build / FIGHTER / "policy.json", {"steps": meta.get("steps"), "experts": experts, "campaign": campaign})
         plan = config.get("plan", "melee")
+        if status == "alive" and self.cfg.plan:
+            plan = self.cfg.plan
         settings = CampaignConfig(plan=plan, id=campaign, reward=config.get("reward"), fight_setup=self.cfg.fight_setup)
         write_json(build / "campaign.json", asdict(settings))
         record = {
@@ -1100,7 +1104,8 @@ class Evolution:
         ranking = [name for name in self.state["ranking"] if self.state["members"][name]["status"] == "alive"]
         parents = [name for name in ranking if name in chosen][: cfg.n_parents]
         rng = np.random.default_rng([cfg.seed, generation])
-        order = [MUTABLE[int(item)] for item in rng.permutation(len(MUTABLE))] if cfg.changes == 1 else []
+        weights = (PLANS[cfg.plan].mutable if cfg.plan else None) or MUTABLE
+        order = [weights[int(item)] for item in rng.permutation(len(weights))] if cfg.changes == 1 else []
         shares = [cfg.children // len(parents) + int(line < cfg.children % len(parents)) for line in range(len(parents))]
         assigned = [(parent, slot) for parent, share in zip(parents, shares) for slot in range(share)]
         children = []
@@ -1402,6 +1407,8 @@ def prepare(root: Path, given: dict) -> EvolveConfig:
         cfg = EvolveConfig(**given)
         if cfg.fight_setup not in FIGHT_SETUPS:
             raise SystemExit(f"unknown fight setup {cfg.fight_setup!r}, expected one of {sorted(FIGHT_SETUPS)}")
+        if cfg.plan is not None and cfg.plan not in PLANS:
+            raise SystemExit(f"unknown plan {cfg.plan!r}, expected one of {sorted(PLANS)}")
         if cfg.n_parents < 1 or cfg.population < cfg.n_parents or cfg.children < 1:
             raise SystemExit("need at least one parent, one child and a population of at least the parents")
     root.mkdir(parents=True, exist_ok=True)
@@ -1446,11 +1453,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--parents", default=None, help="comma separated run folders")
     p.add_argument("--frozen", default=None, help="comma separated run folders played as frozen rivals")
     for item in fields(EvolveConfig):
-        if item.name in ("parents", "frozen", "fight_setup"):
+        if item.name in ("parents", "frozen", "fight_setup", "plan"):
             continue
         kind = float if item.type == "float" else int
         p.add_argument("--" + item.name.replace("_", "-"), type=kind, default=None)
     p.add_argument("--fight-setup", choices=sorted(FIGHT_SETUPS), default=None, help="the kit and arena to train and test in")
+    p.add_argument("--plan", choices=sorted(PLANS), default=None, help="train every founder under this plan")
     p.add_argument("--parallel", type=int, default=None, help="children trained at once")
     p.add_argument("--rank-parallel", type=int, default=None, help="worker processes for ranking matches, 1 plays them in the driver")
     p.add_argument("--threads", type=int, default=None)

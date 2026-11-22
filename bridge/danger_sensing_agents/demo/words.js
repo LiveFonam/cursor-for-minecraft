@@ -5,12 +5,14 @@ const ANIMALS = Object.freeze(['cow', 'pig', 'sheep', 'chicken'])
 
 const HELP_LINES = Object.freeze([
   'Demo commands:',
-  '!reset (or !start): clean scene, agent with shield, axe and 6 bread',
+  '!reset (or !start): back to your base with an empty chest, agent with shield, axe and 6 bread',
+  '!chest: the same, with the chest stocked for a diamond pickaxe',
+  '!follow: during a task, watch from the agent. !unfollow to fly free',
   '!1v1: fight the trained axe fighter in the arena',
-  `!evil: build your base, then a creeper breaches it and 3 zombies invade`,
+  `!evil: a creeper breaches your base and 3 zombies invade`,
   `!mob [${MOBS.join('|')}]: send a mob at the agent`,
   `!animal [${ANIMALS.join('|')}]: put an animal by the agent`,
-  '!stop: stop everything and come back',
+  '!stop: stop everything and go back to the base',
   '!help: this list',
   'Or say a task in plain words: make me a diamond pickaxe'
 ])
@@ -30,6 +32,9 @@ function parseDemoCommand (text) {
   switch (word) {
     case 'start':
     case 'reset': return noArgs('reset')
+    case 'chest': return noArgs('chest')
+    case 'follow': return noArgs('follow')
+    case 'unfollow': return noArgs('unfollow')
     case '1v1': return noArgs('duel')
     case 'evil': return noArgs('evil')
     case 'stop': return noArgs('stop')

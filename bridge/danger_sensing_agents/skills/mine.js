@@ -1,7 +1,7 @@
 // Scripted mining with mineflayer-pathfinder and bot.dig. Two strategies, picked by job.strategy:
 //
 //   tunnel  the baseline for the mining benchmark (agents.js --miner tunnel). It goes for ore it could
-//        plausibly know about (an open face it can see, plus anything within NOTICE blocks) and otherwise strip
+//        plausibly know about (an open face it can see now or saw earlier) and otherwise strip
 //        mines one tunnel with the odd turn, down a staircase to the ore's usual height first.
 //   branch  branch mining at each ore's 1.21 depth, caving for iron, coal and copper, surface walks for logs and sand,
 //        lava, gravel and drop safety, torches on the right wall, and the haul stored in a chest at home
@@ -15,12 +15,12 @@ const { goals } = require('mineflayer-pathfinder')
 const { sleep } = require('./human')
 const { goTo, walkOnly, walkOnlyMoves, dropDigMoves } = require('./move')
 const { digHazard } = require('../hazards')
-const { canFlow, inPickupBox, pickupSpot, preAim, seesBlock } = require('./motion')
+const { isDiamondOre } = require('./ore_marks')
+const { canFlow, findKnownOre, inPickupBox, pickupSpot, preAim } = require('./motion')
 const { bestPickaxeItem } = require('./gather_kinds')
 const { GoalPickup, pickUpDrops } = require('./pickup')
 
 const SEE_RADIUS = { off: 24, light: 20, full: 16 }
-const NOTICE = 4
 const REACH = 4.4             // a little under the server's 4.5 block reach
 const MAX_EXPLORE = 400      // blocks of tunnel before giving up
 const DROP_WAIT_MS = 350
@@ -69,30 +69,9 @@ const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1
 
 class MineError extends Error {}
 
-function isExposed (bot, pos) {
-  for (const [dx, dy, dz] of DIRS) {
-    const b = bot.blockAt(pos.offset(dx, dy, dz))
-    if (!b || b.boundingBox === 'empty' || b.name === 'water' || b.name === 'lava') return true
-  }
-  return false
-}
-
-// Ore it can plausibly know about, nearest first
+// Ore it can see from here or saw earlier, nearest first
 function visibleTargets (bot, ids, human) {
-  const radius = SEE_RADIUS[human.level] ?? 20
-  const found = bot.findBlocks({ matching: ids, maxDistance: radius, count: 200 })
-  const eye = bot.entity.position.offset(0, 1.62, 0)
-  const out = []
-  let checks = 0
-  for (const pos of found) {
-    const d = pos.offset(0.5, 0.5, 0.5).distanceTo(eye)
-    if (d <= NOTICE) { out.push(pos); continue }
-    if (!isExposed(bot, pos) || checks > 40) continue
-    checks++
-    const block = bot.blockAt(pos)
-    if (block && seesBlock(bot, block)) out.push(pos)
-  }
-  return out
+  return findKnownOre(bot, ids, SEE_RADIUS[human.level] ?? 20)
 }
 
 // The best tool it carries for this block, or a reason it has none
@@ -615,11 +594,15 @@ async function mineJob (bot, job, human, token, hooks = {}) {
   if (!job.stats) job.stats = newStats(strategy)
   const counter = digCounter(bot)
   const before = counter.n
+  // a job that does not need diamonds never breaks them, not even for a tunnel or a path (hazards.js)
+  const keepDiamonds = !job.blocks.some(n => isDiamondOre({ name: n }))
+  if (keepDiamonds) bot._keepOre = isDiamondOre
   try {
     if (strategy === 'tunnel') return await tunnelMineJob(bot, job, ids, human, token, hooks)
     // required here, mine_branch.js uses this file's helpers
     return await require('./mine_branch').branchMineJob(bot, job, ids, human, token, hooks)
   } finally {
+    if (keepDiamonds) bot._keepOre = null
     job.stats.dug += counter.n - before
     job.stats.endedAt = Date.now()
   }
@@ -672,7 +655,6 @@ module.exports = {
   visibleTargets,
   pickTool,
   keepToolsForTheirBlocks,
-  isExposed,
   equipFor,
   collectAround,
   stepInto,
@@ -682,7 +664,6 @@ module.exports = {
   PICKAXES,
   BEST_Y,
   SEE_RADIUS,
-  NOTICE,
   REACH,
   AIR,
   LIQUID,

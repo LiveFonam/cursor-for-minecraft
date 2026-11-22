@@ -45,6 +45,7 @@ function markBurned (bot, pos, now = Date.now()) {
 function digHazard (bot, block, now = Date.now()) {
   const p = block?.position
   if (!p) return null
+  if (bot._keepOre?.(block)) return 'ore left for the master'
   if (isLava(bot.blockAt(p.offset(0, 1, 0)))) return 'lava above it'
   for (const [dx, dz] of SIDES) {
     if (isLava(bot.blockAt(p.offset(dx, 0, dz)))) return 'lava beside it'

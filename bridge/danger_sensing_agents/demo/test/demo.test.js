@@ -71,7 +71,7 @@ function rig ({ replies, extra } = {}) {
     agentBot: () => bot,
     stopAgent: async () => { agents.stops++ },
     runTask: async t => { agents.tasks.push(t) },
-    dummyHas: async () => agents.holds
+    forgetChest: () => {}
   }
   const duelOptions = []
   const c = new DemoController({
@@ -100,7 +100,7 @@ test('settings: refuses a remote server, bad names, a bad stage and name clashes
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer' }, { ...CONFIG, host: 'example.invalid' }), /this machine/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'no spaces' }, CONFIG), /Minecraft name/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_STAGE: '1,2' }, CONFIG), /DEMO_STAGE/)
-  assert.throws(() => loadSettings({ DEMO_PLAYER: 'Agent1' }, CONFIG), /four different/)
+  assert.throws(() => loadSettings({ DEMO_PLAYER: 'Agent1' }, CONFIG), /three different/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_CUE_MOB: 'soon' }, CONFIG), /whole number/)
 })
 
@@ -207,31 +207,34 @@ test('controller: only the demo player is obeyed', async () => {
   assert.deepEqual(agents.tasks, ['make me a diamond pickaxe'])
 })
 
-test('controller: a task puts him in spectator on the agent, again after a respawn, and hands to the dummy', async () => {
-  const { c, rcon, agents, bot, timers } = rig()
+test('controller: a task puts him in spectator where he stands, !follow goes on the agent, and he receives the item', async () => {
+  let held = 0
+  const { c, rcon, bot, timers } = rig({ replies: { 'clear Viewer minecraft:diamond_pickaxe 0': () => (held ? `Found ${held} matching item(s) on player Viewer` : 'No items were found on player Viewer') } })
   await c.taskStarted('diamond_pickaxe')
   assert.equal(c.state, 'run')
+  assert.ok(rcon.has('gamemode spectator Viewer'))
+  assert.ok(!rcon.has('spectate Agent1 Viewer'))
+  await c.handle('!follow', 'Viewer')
   assert.ok(rcon.index('gamemode spectator Viewer') < rcon.index('spectate Agent1 Viewer'))
-  assert.ok(rcon.has('spectate Agent1 Viewer'))
   rcon.sent.length = 0
   bot.health = 0
   await c.agentSpawned()
-  assert.equal(rcon.sent.length, 0)
+  assert.ok(!rcon.has('spectate'))
   bot.health = 20
   await c.agentSpawned()
   assert.deepEqual(rcon.sent, ['spectate Agent1 Viewer'])
-  assert.equal(timers.intervals.size, 1)
-  assert.equal(timers.timeouts.size, 2)
-  agents.holds = true
+  assert.equal(timers.intervals.size, 0)
+  assert.equal(timers.timeouts.size, 3)
+  held = 1
   await c.taskEnded('done')
   assert.equal(c.state, 'idle')
   assert.equal(timers.intervals.size, 0)
   assert.equal(timers.timeouts.size, 0)
   assert.ok(rcon.has('gamemode creative Viewer'))
-  assert.ok(rcon.sent.some(s => s.includes('tellraw') && s.includes('Dummy has the diamond pickaxe')))
+  assert.ok(rcon.sent.some(s => s.includes('tellraw') && s.includes('you have the diamond pickaxe')))
 })
 
-test('controller: the end of a task says so when the dummy got nothing', async () => {
+test('controller: the end of a task says so when he got nothing', async () => {
   const { c, rcon } = rig()
   await c.taskStarted('diamond_pickaxe')
   await c.taskEnded('done')
@@ -284,7 +287,7 @@ test('controller: evil with the director builds the base, spawns, and hands the 
   assert.ok(rcon.has('{ignited:1b}'))
   await c.handle('!reset', 'Viewer')
   assert.ok(rcon.has('director stop'))
-  assert.equal(c.baseBuilt, false)
+  assert.equal(c.baseIntact, true)
 })
 
 test('controller: evil without the director lights the creeper at the wall', async () => {
@@ -456,7 +459,7 @@ test('duel: the real process loads the client and a policy, then exits when the 
   assert.equal(code, 3)
 })
 
-test('agents: "make me a diamond pickaxe" becomes a goal for the dummy, and a stopped task is forgotten', async () => {
+test('agents: "make me a diamond pickaxe" becomes a goal for the player, and a stopped task is forgotten', async () => {
   const { DemoAgents } = require('../run')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-agents-'))
   const s = settings()
@@ -469,8 +472,7 @@ test('agents: "make me a diamond pickaxe" becomes a goal for the dummy, and a st
   assert.equal(seen[0].name, 'get')
   assert.equal(seen[0].args.item, 'diamond_pickaxe')
   assert.equal(seen[0].args.count, 1)
-  assert.equal(seen[0].args.requester, s.dummy)
-  assert.ok(a.friends.has(s.dummy))
+  assert.equal(seen[0].args.requester, s.player)
   assert.equal(await a.ensureKit(), undefined)
 
   const events = []
@@ -531,6 +533,8 @@ const fits = (parser, word) => {
 
 function walks (root, node, words, i) {
   if (i === words.length) return !!node.executable
+  // the data lists execute's run with no children: in the game it goes on at the root
+  if (node.type === 'literal' && node.name === 'run' && !node.children?.length) return walks(root, root, words, i)
   const from = node.redirects?.length ? root.children.find(c => c.name === node.redirects[0]) : node
   if (from !== node && walks(root, from, words, i)) return true
   for (const child of node.children || []) {
@@ -558,7 +562,11 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   await a.c.handle('!help', 'Viewer')
   for (const m of MOBS) await a.c.handle(`!mob ${m}`, 'Viewer')
   for (const x of ANIMALS) await a.c.handle(`!animal ${x}`, 'Viewer')
+  await a.c.handle('!chest', 'Viewer')
   await a.c.taskStarted('diamond_pickaxe')
+  await a.c.handle('!follow', 'Viewer')
+  await a.c.handle('!unfollow', 'Viewer')
+  await a.c.playerHome()
   await a.c.taskEnded('done')
   await a.c.handle('!evil', 'Viewer')
   await a.timers.fire(3000)
@@ -588,7 +596,7 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   }
   assert.deepEqual(bad, [])
   for (const wrong of ['effect give @e minecraft:speed forever', 'item replace entity Viewer hotbar.0 diamond_axe',
-    'fill 1 2 3 4 5 barrier', 'spectate Agent1 Viewer extra', 'forceload add', 'time set', 'data merge entity']) {
+    'fill 1 2 3 4 5 barrier', 'spectate Agent1 Viewer extra', 'execute as Viewer run spectate Agent1 Viewer extra', 'execute as Viewer run', 'forceload add', 'time set', 'data merge entity']) {
     assert.equal(walks(root, root, splitCommand(wrong), 0), false, wrong)
   }
   assert.ok(checked > 60, `only ${checked} lines checked`)

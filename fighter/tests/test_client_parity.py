@@ -15,7 +15,7 @@ import pytest
 
 from fighter import actions as A
 from fighter import constants as C
-from fighter.obs import build_obs
+from fighter.obs import OBS_DIM, build_obs
 from fighter.sim import Sim, SimConfig
 
 CLIENT = os.environ.get("FIGHTER_CLIENT_JS", "")
@@ -80,48 +80,59 @@ function acting (start) {
 
 function observing (s) {
   const f = Object.create(Fighter.prototype)
-  const enemyVel = v3(s.enemy_move)
+  const body = { type: 'player', position: v3(s.enemy_pos), yaw: s.enemy_yaw, heldItem: held(s.enemy_weapon) }
   f.bot = {
-    entity: { yaw: s.yaw, pitch: s.pitch, onGround: s.on_ground, position: v3(s.pos), velocity: v3(s.vel) },
+    entities: {},
+    entity: { id: 'self', yaw: s.yaw, pitch: s.pitch, onGround: s.on_ground, isInWater: s.in_water, position: v3(s.pos), velocity: v3(s.vel) },
     heldItem: held(s.weapon),
     health: s.hp,
-    getControlState: () => s.sprinting,
-    blockAtCursor: () => null,
-    world: { raycast: () => null }
+    getControlState: k => (k === 'sneak' ? s.sneak : k === 'sprint' ? s.sprinting : false),
+    blockAt: () => ({ name: s.eyes_in_water ? 'water' : 'air' })
   }
-  f.enemy = {
-    entity: () => ({ position: v3(s.enemy_pos), yaw: s.enemy_yaw, heldItem: held(s.enemy_weapon) }),
-    vel: enemyVel,
-    onGround: () => Math.abs(enemyVel.y) < 0.005,
-    leadInputs: () => ({ vel: enemyVel, extra: 0 }),
-    health: () => s.enemy_hp,
-    chargeEstimate: () => Math.min(Math.max((s.enemy_attack_ticks + 0.5) / s.enemy_charge_ticks, 0), 1),
+  f.enemy = Object.assign(Object.create(client.EnemyView.prototype), {
+    bot: { players: { rival: { entity: body } } },
+    username: 'rival',
+    lookup: null,
+    vel: v3(s.enemy_move),
+    history: [body.position, body.position],
+    damageTaken: 20 - s.enemy_hp,
+    hurtTimer: s.enemy_hurt_timer,
+    ticksSinceSwing: s.since_enemy_swing,
+    charge: () => Math.min(Math.max((s.enemy_attack_ticks + 0.5) / s.enemy_charge_ticks, 0), 1),
+    useTicks: s.enemy_use_ticks,
+    shieldCooldown: s.enemy_shield_cooldown,
     shieldUp: () => s.enemy_shield_up,
     shieldActive: () => s.enemy_shield_active,
     rangedUse: () => s.enemy_ranged_use,
     crossbowLoaded: () => s.enemy_loaded,
-    sprinting: () => s.enemy_sprinting,
-    shieldCooldown: s.enemy_shield_cooldown,
-    ticksSinceSwing: s.since_enemy_swing
-  }
-  f.terrain = () => ({ grid: new Array(49).fill(0), lavaDist: 5, lavaDir: 0 })
-  f.nearArrow = () => ({ arrowNear: false, arrowFwd: 0, arrowRight: 0 })
+    sprinting: () => s.enemy_sprinting
+  })
+  f.arena = s.arena
+  f.borderHalf = s.border_half
+  f.readyGate = s.ready_gate
+  f.sight = { pos: null, move: null, visible: false, chestClear: false, crosshairClear: false, seen: false }
+  f.arrowsSeen = new Map(s.arrows.map((a, i) => [i, { pos: v3(a.pos), vel: v3(a.vel), grounded: a.grounded, groundAge: a.age }]))
+  f.arrowOwner = new Map()
+  f.lastMove = v3(s.last_move)
   f.fairHealth = false
+  f.sprintFlag = s.sprinting
+  f.hurtTimer = s.hurt_timer
+  f.fall = s.fall
+  f.ticks = s.ticks
   f.ticksSinceSwing = s.attack_ticks
   f.shieldUp = s.shield_up
   f.shieldTicks = s.shield_ticks
   f.shieldCooldown = s.shield_cooldown
-  f.ticksSinceIHit = s.since_hit
-  f.ticksSinceHitMe = s.since_hurt
-  f.ticksSinceShieldDisabled = s.since_disabled
-  f.ticksSinceEnemyWhiff = s.since_whiff
-  f.ticksSinceMeleeHit = 100
+  f.ticksSinceHit = s.since_hit
+  f.ticksSinceHurt = s.since_hurt
+  f.ticksSinceDisabled = s.since_disabled
+  f.ticksSinceWhiff = s.since_whiff
   f.combo = s.combo
   f.loaded = s.loaded
   f.charging = s.load_ticks > 0
-  f.crossbowTicks = s.load_ticks
+  f.loadTicks = s.load_ticks
   f.drawing = s.draw_ticks > 0
-  f.bowTicks = s.draw_ticks
+  f.drawTicks = s.draw_ticks
   f.arrows = s.ammo
   f.prevAction = s.last_action
   return f
@@ -133,22 +144,15 @@ reply.acts = input.acts.map(a => {
   f.act(a.action)
   return out
 })
-reply.obs = input.states.map(s => observing(s).observe({ x: 0, z: 0 }, s.round_time))
+reply.obs = input.states.map(s => observing(s).observe())
 console.log(JSON.stringify(reply))
 """
 
 ITEM = {C.SWORD: "diamond_sword", C.AXE: "diamond_axe", C.BOW: "bow", C.CROSSBOW: "crossbow"}
 SLOT_OF = {C.AXE: 0, C.SWORD: 1, C.CROSSBOW: 2, C.BOW: 3}
 
-# Shared input slot to the client's input index.
-EXACT_SLOTS = {
-    0: 14, 1: 6, 2: 7, 3: 8, 4: 12, 5: 40, 12: 18, 13: 19, 14: 101, 15: 106, 16: 16, 19: 22, 20: 23, 21: 24,
-    22: 102, 23: 103, 24: 107, 25: 104, 28: 1, 31: 2, 32: 110, 33: 3, 34: 4, 35: 5, 37: 116, 39: 9, 40: 10, 41: 11,
-    42: 13, 43: 30, 44: 115, 45: 15, 47: 17, 48: 20, 49: 21, 50: 105, 51: 108, 52: 25, 53: 26, 54: 27, 55: 28,
-    56: 29, 57: 109, 59: 120, 61: 31, 62: 32, 63: 33, 64: 34, 65: 35, 66: 36, 67: 41, 68: 42, 69: 43, 70: 44,
-    71: 45, 72: 46, 73: 47, 74: 48,
-}
-LEAD_SLOTS = {75: 111, 76: 112, 79: 113, 80: 114}
+# The simulator and the client share one input layout.
+EXACT_SLOTS = range(OBS_DIM)
 
 
 def run_client(acts=(), states=()):
@@ -211,6 +215,25 @@ def state_of(sim, env, seat=0):
         "enemy_loaded": bool(sim.loaded[env, you] and sim.weapon[env, you] == C.CROSSBOW),
         "enemy_sprinting": bool(sim.sprinting[env, you]),
         "enemy_shield_cooldown": int(sim.shield_disabled[env, you]),
+        "enemy_hurt_timer": int(sim.hurt_timer[env, you]),
+        "enemy_use_ticks": int(max(sim.draw_ticks[env, you], sim.load_ticks[env, you])),
+        "in_water": bool(sim.combat.in_water[env, seat]),
+        "eyes_in_water": bool(sim.combat.eyes_in_water[env, seat]),
+        "sneak": bool(sim.body.sneak[env, seat]),
+        "hurt_timer": int(sim.hurt_timer[env, seat]),
+        "fall": float(sim.body.fall[env, seat]),
+        "ticks": int(sim.ticks[env]),
+        "last_move": sim.body.last_move[env, seat].tolist(),
+        "ready_gate": float(sim.cfg.ready_gate),
+        "arrows": [
+            {"pos": sim.arrow_pos[env, i].tolist(), "vel": sim.arrow_vel[env, i].tolist(), "grounded": False, "age": 0}
+            for i in np.flatnonzero(sim.arrow_on[env] & (sim.arrow_owner[env] != seat)).tolist()
+        ] + [
+            {"pos": sim.stuck_pos[env, i].tolist(), "vel": [0.0, 0.0, 0.0], "grounded": True, "age": int(sim.stuck_age[env, i])}
+            for i in np.flatnonzero(sim.stuck_on[env] & sim.stuck_pickup[env]).tolist()
+        ],
+        "border_half": float(np.broadcast_to(sim.border_half, (sim.n,))[env]),
+        "arena": dict(zip("xyz", np.broadcast_to(sim.origin, (sim.n, 3))[env].tolist()), half=float(sim.cfg.arena_half)),
     }
 
 
@@ -295,18 +318,19 @@ def test_shared_inputs_match_the_client_on_played_states():
     sim = played_sim()
     states = [state_of(sim, env) for env in range(sim.n)]
     reply = run_client(states=states)
-    assert reply["obsDim"] == 125
+    assert reply["obsDim"] == OBS_DIM
     ours = build_obs(sim, 0, 600).astype(np.float64)
     theirs = np.array(reply["obs"], dtype=np.float64)
-    assert theirs.shape == (sim.n, 125)
-    for slot, index in EXACT_SLOTS.items():
-        assert ours[:, slot] == pytest.approx(theirs[:, index], abs=2e-5), f"slot {slot}"
+    assert theirs.shape == (sim.n, OBS_DIM)
+    for slot in EXACT_SLOTS:
+        assert ours[:, slot] == pytest.approx(theirs[:, slot], abs=2e-5), f"slot {slot}"
 
 
 def test_yaw_error_slots_match_the_client_angle():
     sim = played_sim(seed=12)
     reply = run_client(states=[state_of(sim, env) for env in range(sim.n)])
-    theirs = np.array(reply["obs"], dtype=np.float64)[:, 0] * np.pi
+    client = np.array(reply["obs"], dtype=np.float64)
+    theirs = np.arctan2(client[:, 26], client[:, 27])
     ours = build_obs(sim, 0, 600).astype(np.float64)
     assert ours[:, 26] == pytest.approx(np.sin(theirs), abs=2e-5)
     assert ours[:, 27] == pytest.approx(np.cos(theirs), abs=2e-5)
@@ -330,6 +354,6 @@ def test_lead_inputs_match_the_client_for_still_bodies(weapon):
     reply = run_client(states=[state_of(sim, env) for env in range(n)])
     ours = build_obs(sim, 0, 600).astype(np.float64)
     theirs = np.array(reply["obs"], dtype=np.float64)
-    assert ours[:, 75] == pytest.approx(theirs[:, LEAD_SLOTS[75]], abs=0.02)
-    assert ours[:, 76] == pytest.approx(theirs[:, LEAD_SLOTS[76]], abs=0.02)
-    assert ours[:, 80] == pytest.approx(theirs[:, LEAD_SLOTS[80]], abs=0.05)
+    assert ours[:, 75] == pytest.approx(theirs[:, 75], abs=0.02)
+    assert ours[:, 76] == pytest.approx(theirs[:, 76], abs=0.02)
+    assert ours[:, 80] == pytest.approx(theirs[:, 80], abs=0.05)

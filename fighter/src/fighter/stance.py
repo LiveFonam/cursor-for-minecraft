@@ -24,9 +24,13 @@ ENEMY_FACING = 55
 
 @dataclass(frozen=True)
 class StanceRules:
-    """followup: fire right after a shield disable and hold fire in the enemy hurt window."""
+    """followup: fire right after a shield disable and hold fire in the enemy hurt window.
+
+    sword_window: the sword can be selected or kept only while the enemy's shield is disabled.
+    """
 
     followup: bool = False
+    sword_window: bool = False
 
 
 def _fix(mask: np.ndarray, rows: np.ndarray, head: int, choice: int) -> None:
@@ -109,4 +113,9 @@ def apply_stance(
     near = np.flatnonzero(free & ~window & can_axe & _axe_reach(sim, seat, picked))
     mask[near, start + crossbow] = False
     mask[near[weapon[near] == C.CROSSBOW], start + A.WEAPON_KEEP] = False
+    if rules.sword_window:
+        closed = sim.shield_disabled[picked, 1 - seat] == 0
+        mask[closed, start + int(A.WEAPON_ACTION[C.SWORD])] = False
+        can_switch = mask[:, start + 1 : start + int(A.NVEC[A.WEAPON])].any(axis=1)
+        mask[closed & (weapon == C.SWORD) & can_switch, start + A.WEAPON_KEEP] = False
     return mask

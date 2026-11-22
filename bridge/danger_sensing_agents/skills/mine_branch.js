@@ -25,9 +25,10 @@ const { goTo, walkTo, rescueMoves } = require('./move')
 const { digHazard } = require('../hazards')
 const { findContainers, storeAtHome } = require('./storage')
 const { pickTool, equipFor, collectAround, stepInto, backOut, MineError, SEE_RADIUS, REACH, AIR, TORCH_EVERY, torchGapFor, countTunnel, torchPlaced, itemIds, dropFilter, bagShort } = require('./mine')
-const { canFlow, clearLine, preAim, preAimNext, seesBlock, walkCells } = require('./motion')
+const { canFlow, clearLine, findKnownOre, preAim, preAimNext, walkCells } = require('./motion')
 const { bestPickaxeItem } = require('./gather_kinds')
 const { announce } = require('../announcer')
+const { isDiamondOre } = require('./ore_marks')
 
 // Where each ore is most common in Java Edition 1.21, read from the Minecraft wiki pages
 // minecraft.wiki/w/Diamond_Ore, Redstone_Ore, Lapis_Lazuli_Ore, Gold_Ore, Iron_Ore, Copper_Ore, Coal_Ore, Emerald_Ore
@@ -161,30 +162,9 @@ function recordCell (ctx, cell) {
   ctx.path.push(cell.clone())
 }
 
-// Ore it could know about: an open face on a cell it has been in or dug and not too far off, or a face it can see
+// Ore it could know about: a face it can see from here or saw earlier, the walls of its own tunnel included
 function seenOre (bot, ctx) {
-  const radius = SEE_RADIUS[ctx.human.level] ?? 20
-  const found = bot.findBlocks({ matching: ctx.ids, maxDistance: radius, count: 200 })
-  const eye = bot.entity.position.offset(0, 1.62, 0)
-  const out = []
-  let checks = 0
-  for (const pos of found) {
-    if (ctx.skip.has(key(pos))) continue
-    const faces = NEIGHBOURS.map(([dx, dy, dz]) => pos.offset(dx, dy, dz)).filter(p => {
-      const b = bot.blockAt(p)
-      return b && b.boundingBox === 'empty'
-    })
-    if (!faces.length) continue  // buried in rock: nobody could know it is there
-    const d = pos.offset(0.5, 0.5, 0.5).distanceTo(eye)
-    if (d <= 6 && faces.some(f => ctx.ownCells.has(key(f)) || ctx.pathIndex.has(key(f)))) {
-      out.push(pos)
-      continue
-    }
-    if (checks++ > 60) continue
-    const block = bot.blockAt(pos)
-    if (block && seesBlock(bot, block)) out.push(pos)
-  }
-  return out
+  return findKnownOre(bot, ctx.ids, SEE_RADIUS[ctx.human.level] ?? 20).filter(pos => !ctx.skip.has(key(pos)))
 }
 
 async function digOne (bot, ctx, block) {
@@ -793,6 +773,47 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
   return 'mined'
 }
 
+// Diamonds it can truly see on a job that leaves them alone: remembered, and the master told once per cluster
+function spotDiamonds (bot, ctx) {
+  const marks = bot._oreMarks
+  if (!marks || !bot._keepOre) return
+  const cell = key(feetCell(bot))
+  if (cell === ctx.markCell) return
+  ctx.markCell = cell
+  const ids = ['diamond_ore', 'deepslate_diamond_ore'].map(n => bot.registry.blocksByName[n]?.id).filter(id => id !== undefined)
+  const seen = seenOre(bot, { ...ctx, ids, skip: new Set() })
+  if (seen.length) marks.saw(bot, seen)
+}
+
+// A diamond job starts at a remembered spot. 'mined', 'next' (look again), 'cancelled', or null when none is left
+async function mineMarked (bot, job, ctx, token) {
+  const marks = bot._oreMarks
+  if (!marks || !job.blocks.some(n => isDiamondOre({ name: n }))) return null
+  const pos = marks.nearest(bot, ctx.skip)
+  if (!pos) return null
+  if (!bot.blockAt(pos)) {  // too far to be loaded: walk close enough to check it
+    try {
+      await goTo(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 4), token)
+    } catch {
+      ctx.skip.add(key(pos))
+      return 'next'
+    }
+    if (token.cancelled) return 'cancelled'
+    if (!bot.blockAt(pos)) {
+      ctx.skip.add(key(pos))
+      return 'next'
+    }
+  }
+  if (!isDiamondOre(bot.blockAt(pos))) {
+    marks.forget(pos)
+    return 'next'
+  }
+  const r = await mineTarget(bot, ctx, pos, token, { more: job.mined + 1 < job.count })
+  if (r === 'mined') marks.forget(pos)
+  else if (r === 'skip') ctx.skip.add(key(pos))
+  return r === 'mined' ? 'mined' : r === 'cancelled' ? 'cancelled' : 'next'
+}
+
 // What goes into the chest: everything but its tools, armour, torches, buckets, food and the biggest stacks of
 // cobblestone and the like up to KEEP_BLOCKS
 function haulFilter (bot) {
@@ -1177,6 +1198,17 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
       }
       await keepSafe(bot, ctx, token)
       if (token.cancelled) break
+      spotDiamonds(bot, ctx)
+      const marked = await mineMarked(bot, job, ctx, token)
+      if (marked === 'cancelled') break
+      if (marked === 'next') continue
+      if (marked === 'mined') {
+        job.mined++
+        job.stats.ores++
+        ctx.steps = 0
+        ctx.onMined?.(job)
+        continue
+      }
       const targets = seenOre(bot, ctx)
       if (targets.length) {
         const target = targets.find(p => ctx.nextTarget && p.equals(ctx.nextTarget)) || targets[0]
@@ -1244,6 +1276,7 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
 
 module.exports = {
   branchMineJob,
+  seenOre,
   hasHarvestTool,
   replacePickaxe,
   bringWood,

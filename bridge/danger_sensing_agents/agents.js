@@ -39,6 +39,7 @@ const { KINDS: GATHER_KINDS } = require('./skills/gather_kinds')
 const { checkPlan } = require('./plan_check')
 const { planGoal, goalCommands, needsToolChain, withAxe } = require('./goal_plan')
 const { ChestMemory, chestView } = require('./chest_memory')
+const { OreMarks, answerDiamonds } = require('./skills/ore_marks')
 const { readOwnerBag } = require('./owner_bag')
 const { addGoalStepMode } = require('./skills/goal_steps')
 const { CONTAINERS } = require('./skills/storage')
@@ -180,6 +181,7 @@ class Agents {
     this.builds = new Builds(opts.builds || BUILDS_FILE)
     // what is in the chests, kept next to the builds of the same world
     this.chests = new ChestMemory(path.join(path.dirname(opts.builds || BUILDS_FILE), 'agents-chests.json'), { log })
+    this.oreMarks = new OreMarks({ say: (bot, text) => this.say(bot, text) })
     this.worldId = 'world'
     this.designer = new Designer({ log, credentials: opts.translator ? undefined : null })
     this.blackboard = new Blackboard()
@@ -279,6 +281,7 @@ class Agents {
     guardAttacks(bot, this.friends, log)
     const ctx = { bot, agents: this, alive: true, seq: 0, pickaxes: null, lastPos: null }
     bot.trail = []  // the cells of its own tunnel, for backing out of water
+    bot._oreMarks = this.oreMarks
     ctx.human = new Human(bot, this.ctxs.get(bot.username)?.human?.level || CONFIG.human || 'light')
     ctx.fight = new FightSkill(bot, this.policy, { friends: this.friends, noDigMoves: this.noDigMoves(bot), log })
     bot.agentsFight = ctx.fight
@@ -528,8 +531,27 @@ class Agents {
 
   // sender: who said it (the owner, or a friend asking the crafter), the crafter hands the item to them
   async onOwnerMessage (message, sender = this.owner) {
-    const p = parseMessage(message, this.names)
+    if (answerDiamonds(this, message, sender)) return  // a yes to "found diamonds", the job comes after this one
+    // the owner's plain words go through the model when it is on. A friend's line stays on the shortcuts, which only
+    // name what a friend may ask for
+    const viaTranslator = !!this.translator?.enabled && String(sender).toLowerCase() === String(this.owner).toLowerCase()
+    let p = parseMessage(message, this.names, { viaTranslator })
     if (!p) return
+    let r = null
+    if (p.type === 'translate') {
+      // plain words through the translator (Claude Haiku), which only names what is wanted
+      r = await this.translator.translate(p.text, p.targets)
+      if (p.shortcut && !r?.vague && !r?.impossible && !r?.parsed?.length) {
+        // no usable answer: a line the shortcuts know still works without the model
+        log(`translator: ${String(r?.error || 'no usable answer').slice(0, 120)}, using the shortcut`)
+        p = p.shortcut
+        r = null
+      } else if (!r.error && !r.vague && !r.impossible && !r.dropped?.length && r.parsed.length === 1 && INFO.has(r.parsed[0].command.name)) {
+        // a question: answered like a typed one, so the job in progress carries on
+        p = { type: 'command', targets: r.parsed[0].targets, command: r.parsed[0].command }
+        r = null
+      }
+    }
     // "craft me a diamond pickaxe" with no way to mine the diamonds yet: the crafter alone would stall, so it is a goal
     if (p.type === 'command' && p.command.name === 'craft' && !String(message).trim().startsWith('!')) {
       const ctx = this.targetsOf(p.targets)[0]
@@ -555,8 +577,6 @@ class Agents {
       this.acknowledge(ctxs, p.command)
       return
     }
-    // plain words through the translator (Claude Haiku), which only names what is wanted
-    const r = await this.translator.translate(p.text, p.targets)
     if (r.error) { this.say(this.listener(), r.error.slice(0, 120)); return }
     // the two refusals, each says why and runs nothing. Too vague: the model asks what is meant. Impossible: a part of
     // it needs a skill the agents have not got, or the model named a command that does not exist
@@ -781,6 +801,7 @@ class Agents {
     switch (command.name) {
       case 'stop':
         ctx.seq++
+        ctx.cancelDiamonds?.()
         m.stopNow()
         return null
       case 'kill':

@@ -272,9 +272,10 @@ test('caving: follows a cave it can see and mines the iron around the corner', a
   assert.match(r.message, /no chest at home so I kept it/)
 })
 
-test('the tunnel strategy finds ore within 4 blocks, the branch one never sees buried ore', async () => {
+test('the tunnel strategy mines ore with an open face in view, the branch one never sees buried ore', async () => {
   const t = setup({ at: new Vec3(0, 64, 0), digLimit: 50, give: [['stone_pickaxe', 1]] })
   t.world.set(new Vec3(1, 62, 0), 'iron_ore')
+  t.world.set(new Vec3(1, 63, 0), 'air')  // its top face is open and in view
   const j = job('iron', IRON, { strategy: 'tunnel' })
   const r = await mineJob(t.bot, j, human, t.token, {})
   assert.equal(r.result, 'done', r.message)

@@ -72,7 +72,9 @@ async function main (cfg) {
   await new Promise(resolve => bot.once('spawn', resolve))
   applyMineflayerFixes(bot)
 
-  const fighter = new Fighter(bot, cfg.enemy, { arena: { x: cfg.arena.x, y: cfg.arena.y, z: cfg.arena.z, half: cfg.arena.half } })
+  const arena = { x: cfg.arena.x, y: cfg.arena.y, z: cfg.arena.z, half: cfg.arena.half }
+  // the league's fighters train with the crossbow and sword rules, so the real fight runs them too
+  const fighter = new Fighter(bot, cfg.enemy, { arena, planRules: true })
   fighter.setFairHealth(!!info?.fair, 'player', false)
   let fighting = false
   let thinking = false
