@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fighter Neurons</title>
+<style>
+  :root {
+    --surface: #1a1a19;
+    --raised: #262624;
+    --rule: #3a3a37;
+    --ink: #f0efec;
+    --soft: #c3c2b7;
+    --excite: #3f93e0;
+    --inhibit: #e8574f;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    color: var(--ink);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 28px;
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  #status { color: var(--soft); font-size: 12px; margin-top: 1px; }
+  .title { min-width: 190px; }
+  .hp { display: flex; gap: 20px; }
+  .fighter { width: 150px; }
+  .fighter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--soft); }
+  .fighter strong { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .track { height: 6px; margin-top: 3px; background: var(--raised); border-radius: 3px; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: var(--soft); border-radius: 3px; transition: width 120ms linear; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-left: auto; color: var(--soft); font-size: 12px; }
+  .key { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .ramp { width: 64px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #243442, #26588c, #3f93e0, #aedcff); }
+  .stroke { display: inline-block; width: 20px; height: 2px; border-radius: 1px; }
+  .stroke.excite { background: var(--excite); }
+  .stroke.inhibit { background: var(--inhibit); }
+  .widths { display: inline-flex; align-items: center; gap: 3px; }
+  .widths i { display: block; width: 7px; background: var(--soft); border-radius: 1px; }
+  #note {
+    padding: 7px 16px;
+    background: var(--raised);
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink);
+    font-size: 12px;
+  }
+  #note[hidden] { display: none; }
+  main { position: relative; flex: 1; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #tip {
+    position: fixed;
+    z-index: 5;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    padding: 10px 12px;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    pointer-events: none;
+    font-size: 12px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  }
+  #tip[hidden] { display: none; }
+  #tip h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  #tip .sub { color: var(--soft); margin-bottom: 6px; }
+  #tip .value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; margin-bottom: 6px; }
+  #tip h3 { margin: 6px 0 1px; font-size: 11px; font-weight: 600; color: var(--soft); }
+  #tip ul { margin: 0; padding: 0; list-style: none; color: var(--ink); }
+  #tip li { overflow-wrap: anywhere; }
+  #tip .none { color: var(--soft); }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>Fighter neurons</h1>
+    <div id="status" role="status">Connecting</div>
+  </div>
+  <div class="hp">
+    <div class="fighter">
+      <div class="row"><span>Fighter HP</span><strong id="me-text">No data</strong></div>
+      <div class="track"><div class="fill" id="me-bar"></div></div>
+    </div>
+    <div class="fighter">
+      <div class="row"><span>Opponent HP</span><strong id="enemy-text">No data</strong></div>
+      <div class="track"><div class="fill" id="enemy-bar"></div></div>
+    </div>
+  </div>
+  <div class="legend" aria-label="Legend">
+    <span class="key">Activation, low <span class="ramp"></span> high</span>
+    <span class="key"><span class="stroke excite"></span>Excites</span>
+    <span class="key"><span class="stroke inhibit"></span>Inhibits</span>
+    <span class="key"><span class="widths"><i style="height:1px"></i><i style="height:2px"></i><i style="height:4px"></i></span>Thicker is stronger</span>
+  </div>
+</header>
+<div id="note" hidden></div>
+<main id="stage"><canvas id="view"></canvas></main>
+<div id="tip" role="tooltip" hidden></div>
+
+<script>
+'use strict'
+
+// One read-only view of the fighter. Frames are drawn when they arrive and old ones are dropped, so the page never holds
+// up the fight. All text from the server goes in through textContent or the canvas.
+
+const INK = '#f0efec'
+const SOFT = '#c3c2b7'
+const RULE = '#3a3a37'
+const EXCITE = '63, 147, 224'
+const INHIBIT = '232, 87, 79'
+const RAMP = [[36, 52, 66], [38, 88, 140], [63, 147, 224], [174, 220, 255]]
+const STALE_MS = 2500
+const RETRY_MS = 1500
+const PEAK_FADE = 0.9995
+const PEAK_FLOOR = 0.25
+const MAX_HP = 20
+const TIP_ROWS = 4
+
+const el = id => document.getElementById(id)
+const box = el('stage')
+const canvas = el('view')
+const ctx = canvas.getContext('2d')
+const tip = el('tip')
+
+const state = { meta: null, frame: null, peaks: { 1: [], 2: [] }, levels: { 1: [], 2: [] }, hover: null, pointer: null, layout: null, lastFrame: 0, stream: null, queued: false }
+
+function shade (value) {
+  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) * (RAMP.length - 1)
+  const at = Math.min(RAMP.length - 2, Math.floor(v))
+  const t = v - at
+  const c = RAMP[at].map((from, i) => Math.round(from + (RAMP[at + 1][i] - from) * t))
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
+}
+
+const neuronsOf = layer => state.meta?.neurons?.[String(layer)] || []
+const columnSize = col => {
+  const m = state.meta
+  if (!m) return 0
+  return [m.groups.length, neuronsOf(1).length, neuronsOf(2).length, m.heads.length][col]
+}
+
+function buildLayout () {
+  const w = box.clientWidth
+  const h = box.clientHeight
+  const narrow = w < 860
+  const left = narrow ? 132 : 176
+  const right = narrow ? 142 : 204
+  const top = 34
+  const bottom = 10
+  const inner = w - left - right
+  const xs = [left, left + inner / 3, left + inner * 2 / 3, w - right]
+  const rows = xs.map((_, col) => (h - top - bottom) / Math.max(1, columnSize(col)))
+  const radius = rows.map(r => Math.max(4, Math.min(8, r * 0.38)))
+  state.layout = { w, h, narrow, left, right, top, bottom, xs, rows, radius, font: narrow ? 11 : 12 }
+}
+
+const nodeY = (col, i) => state.layout.top + (i + 0.5) * state.layout.rows[col]
+
+function resize () {
+  const dpr = window.devicePixelRatio || 1
+  canvas.width = Math.round(box.clientWidth * dpr)
+  canvas.height = Math.round(box.clientHeight * dpr)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  buildLayout()
+  requestDraw()
+}
+
+function fitText (text, room) {
+  const value = String(text)
+  if (ctx.measureText(value).width <= room) return value
+  let n = value.length
+  while (n > 1 && ctx.measureText(value.slice(0, n) + '...').width > room) n--
+  return value.slice(0, n) + '...'
+}
+
+// A neuron's brightness: the measured scale when the names match this network, or else its own recent peak
+function trackLevels (frame) {
+  for (const layer of [1, 2]) {
+    const raw = frame[`raw${layer}`] || []
+    const scaled = frame[`n${layer}`] || []
+    const peaks = state.peaks[layer]
+    state.levels[layer] = raw.map((value, i) => {
+      if (state.meta?.named) return scaled[i] ?? 0
+      peaks[i] = Math.max(PEAK_FLOOR, value, (peaks[i] ?? PEAK_FLOOR) * PEAK_FADE)
+      return value / peaks[i]
+    })
+  }
+}
+
+// How hard the strongest live line drives each action head
+function headDrive (frame) {
+  const out = new Array(state.meta.heads.length).fill(0)
+  for (const [gap, , b, s] of frame.lines || []) if (gap === 2) out[b] = Math.max(out[b], Math.abs(s))
+  return out
+}
+
+function touches (line, hover) {
+  const [gap, a, b] = line
+  return (gap === hover.col && a === hover.i) || (gap + 1 === hover.col && b === hover.i)
+}
+
+function drawLines (frame) {
+  const { xs, radius } = state.layout
+  const lines = [...(frame.lines || [])].sort((p, q) => Math.abs(p[3]) - Math.abs(q[3]))
+  const hover = state.hover
+  for (const line of lines) {
+    const [gap, a, b, s] = line
+    const power = Math.pow(Math.min(1, Math.abs(s)), 1.6)
+    const on = !hover || touches(line, hover)
+    const alpha = on ? 0.1 + 0.85 * power : 0.03
+    const x1 = xs[gap] + radius[gap] + 1
+    const x2 = xs[gap + 1] - radius[gap + 1] - 1
+    const y1 = nodeY(gap, a)
+    const y2 = nodeY(gap + 1, b)
+    const mid = (x1 + x2) / 2
+    ctx.beginPath()
+    ctx.moveTo(x1, y1)
+    ctx.bezierCurveTo(mid, y1, mid, y2, x2, y2)
+    ctx.strokeStyle = `rgba(${s >= 0 ? EXCITE : INHIBIT}, ${alpha.toFixed(3)})`
+    ctx.lineWidth = (hover && on ? 0.8 : 0.45) + 3.4 * power
+    ctx.stroke()
+  }
+}
+
+function drawNode (x, y, r, value, col, i) {
+  const hovered = state.hover?.col === col && state.hover?.i === i
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.fillStyle = shade(value)
+  ctx.fill()
+  ctx.lineWidth = hovered ? 2 : 1
+  ctx.strokeStyle = hovered ? INK : RULE
+  ctx.stroke()
+}
+
+function draw () {
+  state.queued = false
+  const m = state.meta
+  const L = state.layout
+  if (!L) return
+  ctx.clearRect(0, 0, L.w, L.h)
+  if (!m) {
+    ctx.fillStyle = SOFT
+    ctx.font = `14px system-ui, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText('Waiting for the fighter to start', L.w / 2, L.h / 2)
+    return
+  }
+  const f = state.frame
+  if (f) drawLines(f)
+
+  ctx.textBaseline = 'alphabetic'
+  ctx.font = `600 ${L.font}px system-ui, sans-serif`
+  ctx.fillStyle = INK
+  const titles = ['Input groups', `Layer 1, ${neuronsOf(1).length} neurons`, `Layer 2, ${neuronsOf(2).length} neurons`, 'Actions, picked choice']
+  titles.forEach((text, col) => {
+    ctx.textAlign = col === 0 ? 'right' : col === 3 ? 'left' : 'center'
+    const x = col === 0 ? L.xs[0] + L.radius[0] : col === 3 ? L.xs[3] - L.radius[3] : L.xs[col]
+    const room = col === 0 ? L.left - 4 : col === 3 ? L.right - 2 : (L.xs[2] - L.xs[1]) - 8
+    ctx.fillText(fitText(text, room), x, 20)
+  })
+
+  ctx.textBaseline = 'middle'
+  ctx.font = `${L.font}px system-ui, sans-serif`
+  m.groups.forEach((name, i) => {
+    const y = nodeY(0, i)
+    drawNode(L.xs[0], y, L.radius[0], f?.groups?.[i] ?? 0, 0, i)
+    ctx.textAlign = 'right'
+    ctx.fillStyle = state.hover?.col === 0 && state.hover.i === i ? INK : SOFT
+    ctx.fillText(fitText(name, L.left - L.radius[0] - 14), L.xs[0] - L.radius[0] - 7, y)
+  })
+  for (const layer of [1, 2]) {
+    neuronsOf(layer).forEach((_, i) => drawNode(L.xs[layer], nodeY(layer, i), L.radius[layer], state.levels[layer][i] ?? 0, layer, i))
+  }
+  const drive = f ? headDrive(f) : []
+  const nameRoom = L.narrow ? 54 : 66
+  m.heads.forEach((head, i) => {
+    const y = nodeY(3, i)
+    drawNode(L.xs[3], y, L.radius[3], drive[i] ?? 0, 3, i)
+    const x = L.xs[3] + L.radius[3] + 7
+    ctx.textAlign = 'left'
+    ctx.fillStyle = SOFT
+    ctx.font = `${L.font}px system-ui, sans-serif`
+    ctx.fillText(fitText(head.name, nameRoom - 4), x, y)
+    const choice = f ? head.choices[f.picks?.[i]] ?? '' : ''
+    ctx.fillStyle = INK
+    ctx.font = `600 ${L.font}px system-ui, sans-serif`
+    ctx.fillText(fitText(choice, L.right - L.radius[3] - nameRoom - 12), x + nameRoom, y)
+  })
+  if (state.hover) fillTip()
+}
+
+function requestDraw () {
+  if (state.queued) return
+  state.queued = true
+  requestAnimationFrame(draw)
+}
+
+// Which node the pointer is on. A group or action's label counts as part of it
+function nodeAt (px, py) {
+  const L = state.layout
+  if (!L || !state.meta) return null
+  let best = null
+  for (let col = 0; col < 4; col++) {
+    const n = columnSize(col)
+    if (!n) continue
+    const reach = L.radius[col] + 5
+    const fromX = col === 0 ? 0 : L.xs[col] - reach
+    const toX = col === 3 ? L.w : L.xs[col] + reach
+    if (px < fromX || px > toX) continue
+    const i = Math.floor((py - L.top) / L.rows[col])
+    if (i < 0 || i >= n) continue
+    const gap = Math.abs(px - L.xs[col])
+    if (!best || gap < best.gap) best = { col, i, gap }
+  }
+  return best && { col: best.col, i: best.i }
+}
+
+function nameOf (col, i) {
+  const m = state.meta
+  if (col === 0) return m.groups[i]
+  if (col === 3) return m.heads[i].name
+  const n = neuronsOf(col)[i]
+  return n?.name || `Neuron ${n?.id ?? i}`
+}
+
+function section (title, items, empty) {
+  const h = document.createElement('h3')
+  h.textContent = title
+  tip.appendChild(h)
+  const list = document.createElement('ul')
+  if (items.length) {
+    for (const item of items) {
+      const li = document.createElement('li')
+      li.textContent = item
+      list.appendChild(li)
+    }
+  } else {
+    const li = document.createElement('li')
+    li.className = 'none'
+    li.textContent = empty
+    list.appendChild(li)
+  }
+  tip.appendChild(list)
+}
+
+const scored = list => (Array.isArray(list) ? list : []).map(x => (Array.isArray(x) ? `${x[0]} (${Number(x[1]).toFixed(2)})` : String(x)))
+
+// The strongest live lines into or out of a node, in words
+function liveLinks (col, i, direction) {
+  const lines = state.frame?.lines || []
+  const out = []
+  for (const [gap, a, b, s] of lines) {
+    if (direction === 'in' && gap + 1 === col && b === i) out.push([gap, a, s])
+    if (direction === 'out' && gap === col && a === i) out.push([gap + 1, b, s])
+  }
+  out.sort((p, q) => Math.abs(q[2]) - Math.abs(p[2]))
+  return out.slice(0, TIP_ROWS).map(([c, at, s]) => `${nameOf(c, at)}, ${s >= 0 ? 'excites' : 'inhibits'} ${Math.round(Math.abs(s) * 100)}%`)
+}
+
+function fillTip () {
+  const { col, i } = state.hover
+  const m = state.meta
+  const f = state.frame
+  tip.replaceChildren()
+  const h = document.createElement('h2')
+  h.textContent = nameOf(col, i)
+  tip.appendChild(h)
+  const sub = document.createElement('div')
+  sub.className = 'sub'
+  const value = document.createElement('div')
+  value.className = 'value'
+
+  if (col === 0) {
+    sub.textContent = 'Input group'
+    value.textContent = f ? `Live ${(f.groups?.[i] ?? 0).toFixed(2)} of the strongest group` : 'No live value yet'
+    tip.append(sub, value)
+    section('Pushes', liveLinks(col, i, 'out'), 'No strong line right now')
+  } else if (col === 3) {
+    const head = m.heads[i]
+    sub.textContent = 'Action head'
+    value.textContent = f ? `Picked: ${head.choices[f.picks?.[i]] ?? 'none'}` : 'No live value yet'
+    tip.append(sub, value)
+    section('Choices', [head.choices.length > 6 ? `${head.choices.length} steps` : head.choices.join(', ')], '')
+    section('Pushed by', liveLinks(col, i, 'in'), 'No strong line right now')
+  } else {
+    const n = neuronsOf(col)[i] || {}
+    sub.textContent = `Layer ${col}, neuron ${n.id ?? i}`
+    const raw = f?.[`raw${col}`]?.[i]
+    value.textContent = Number.isFinite(raw) ? `Live ${raw.toFixed(2)}` : 'No live value yet'
+    tip.append(sub, value)
+    const unmeasured = 'Not measured for this fighter'
+    section('High on', m.named ? scored(n.high_when) : [], unmeasured)
+    section('Low on', m.named ? scored(n.low_when) : [], unmeasured)
+    section('Reads', m.named ? scored(n.reads) : liveLinks(col, i, 'in'), m.named ? 'Nothing recorded' : 'No strong line right now')
+    section('Pushes', m.named ? scored(n.pushes) : liveLinks(col, i, 'out'), m.named ? 'Nothing recorded' : 'No strong line right now')
+  }
+  placeTip()
+}
+
+function placeTip () {
+  if (!state.pointer) return
+  const margin = 8
+  const rect = tip.getBoundingClientRect()
+  let x = state.pointer.x + 16
+  let y = state.pointer.y + 12
+  if (x + rect.width > window.innerWidth - margin) x = state.pointer.x - rect.width - 16
+  if (y + rect.height > window.innerHeight - margin) y = window.innerHeight - rect.height - margin
+  tip.style.left = `${Math.max(margin, x)}px`
+  tip.style.top = `${Math.max(margin, y)}px`
+}
+
+canvas.addEventListener('pointermove', e => {
+  const r = canvas.getBoundingClientRect()
+  state.pointer = { x: e.clientX, y: e.clientY }
+  const next = nodeAt(e.clientX - r.left, e.clientY - r.top)
+  const same = next?.col === state.hover?.col && next?.i === state.hover?.i
+  state.hover = next
+  tip.hidden = !next
+  if (next && same) placeTip()
+  if (!same) requestDraw()
+  if (next && !same) fillTip()
+})
+canvas.addEventListener('pointerleave', () => {
+  state.hover = null
+  state.pointer = null
+  tip.hidden = true
+  requestDraw()
+})
+
+function showHp (key, value) {
+  const known = Number.isFinite(value)
+  el(`${key}-text`).textContent = known ? `${value.toFixed(1)} / ${MAX_HP}` : 'No data'
+  el(`${key}-bar`).style.width = known ? `${Math.max(0, Math.min(100, value / MAX_HP * 100))}%` : '0'
+}
+
+function showNote () {
+  const note = el('note')
+  const unnamed = state.meta && !state.meta.named
+  note.hidden = !unnamed
+  if (unnamed) note.textContent = 'Neuron names are unavailable for this fighter. The saved names were measured on a different network, so each neuron shows only its number.'
+}
+
+function setStatus (text) {
+  if (el('status').textContent !== text) el('status').textContent = text
+}
+
+async function loadMeta () {
+  try {
+    const reply = await fetch('/meta', { cache: 'no-store' })
+    if (!reply.ok) return false
+    const meta = await reply.json()
+    const changed = JSON.stringify(meta) !== JSON.stringify(state.meta)
+    state.meta = meta
+    if (changed) {
+      state.peaks = { 1: [], 2: [] }
+      state.levels = { 1: [], 2: [] }
+      state.frame = null
+      state.hover = null
+      tip.hidden = true
+    }
+    showNote()
+    buildLayout()
+    requestDraw()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function connect () {
+  state.stream?.close()
+  const stream = new EventSource('/stream')
+  state.stream = stream
+  stream.onopen = () => {
+    setStatus('Connected, waiting for the fight')
+    loadMeta()
+  }
+  stream.onmessage = e => {
+    let frame
+    try {
+      frame = JSON.parse(e.data)
+    } catch {
+      return
+    }
+    if (!state.meta) return
+    state.frame = frame
+    state.lastFrame = Date.now()
+    trackLevels(frame)
+    showHp('me', frame.me)
+    showHp('enemy', frame.enemy)
+    setStatus('Live')
+    requestDraw()
+  }
+  stream.onerror = () => {
+    setStatus('No fight running. This page reconnects by itself.')
+    if (stream.readyState === EventSource.CLOSED) setTimeout(connect, RETRY_MS)
+  }
+}
+
+setInterval(() => {
+  if (state.lastFrame && Date.now() - state.lastFrame > STALE_MS && state.stream?.readyState === EventSource.OPEN) setStatus('Connected, waiting for the fight')
+}, 1000)
+
+new ResizeObserver(resize).observe(box)
+resize()
+loadMeta()
+connect()
+</script>
+</body>
+</html>

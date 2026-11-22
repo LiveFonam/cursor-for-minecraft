@@ -130,11 +130,46 @@ Claude Haiku picks each plan from a fixed menu: which wall, where along it, how 
 !1v1
 ```
 
-You and the trained axe fighter go to the arena in full diamond with an axe, sword, shield, crossbow and bow. A fight lasts up to 3 minutes, then you return to your base.
+You and the trained axe fighter, who logs in as `FNN`, go to a yellow and black 20 by 20 arena in full diamond with an axe, sword, shield, crossbow and bow. Both of you are in adventure mode, so nothing can be broken or placed.
+
+Every fight gets fresh cover: 1 or 2 pairs of solid gray pillars. Each pair is mirrored across the middle of the arena, so neither side is better, and stays away from both spawn spots. The pillars are gone when the fight ends.
+
+A 3, 2, 1 countdown on a boss bar holds both of you still. Then the fight starts, with HP under each name. It lasts up to 3 minutes, then you return to your base.
+
+To watch the fighter think, see [the live neuron screen](#the-live-neuron-screen).
 
 ### 9. Run it again
 
 `!reset` rebuilds the base for another go. `!stop` stops whatever is happening and brings you back to the base.
+
+## A match in its own world
+
+This runs the same fight without the walkthrough. One command starts a separate Paper server with its own flat world, waits for you to join, plays a best of 3 (first to 2 wins) with a short score message between fights, and stops that server when it ends. A drawn fight does not count, and a match is at most 5 fights.
+
+Before the first run:
+
+1. Put a Paper 1.21.11 jar at `runs/one-v-one/paper.jar`, or set `ONE_V_ONE_PAPER` to its path. You need Java 21, and `ONE_V_ONE_JAVA` can point to it.
+2. Read the [Minecraft EULA](https://aka.ms/MinecraftEULA). If you agree, create `runs/one-v-one/eula.txt` with the line `eula=true`. The command never accepts it for you. Without that line it stops and tells you what to do.
+
+Then start it:
+
+```sh
+DEMO_PLAYER=<your Minecraft name> \
+DEMO_FIGHTER_RUN=<folder of a trained fighter> \
+node bridge/danger_sensing_agents/demo/one_v_one.js
+```
+
+Join `localhost:25570` when the log asks you to. The console uses port 25571. `ONE_V_ONE_PORT` and `ONE_V_ONE_CONSOLE_PORT` change them. The server only accepts connections from this machine, and everything it writes stays in `runs/one-v-one`, which git ignores. Press Ctrl-C to stop early. Only the server process this run started is stopped.
+
+## The live neuron screen
+
+While a fight runs, in either version, open <http://127.0.0.1:8770>. The page keeps trying to reconnect between fights, so you can leave it open.
+
+It has four columns: the input groups, 32 neurons from layer 1, 32 from layer 2, and the 11 action heads with the choice each one picked. A brighter blue node is more active. Lines are the strongest connections at this moment, blue when they excite and red when they inhibit, and thicker lines are stronger. Hover over anything to read its name, live value, what it is high and low on, what it reads and what it pushes.
+
+Names only appear when they were measured on the exact network that is fighting. Otherwise the page says so and shows `Neuron <id>`, with the live connections but no made-up meaning.
+
+The fight never waits for the page. Set `DEMO_NEURONS_PORT` to use another port, or to 0 for no screen.
 
 ## Commands
 
@@ -152,7 +187,7 @@ You and the trained axe fighter go to the arena in full diamond with an axe, swo
 | `!mob [zombie, skeleton, enderman, creeper]` | Sends a mob at the agent |
 | `!animal [cow, pig, sheep, chicken]` | Puts an animal next to the agent |
 | `!evil` | The evil god hunts you in waves until a task, `!reset`, `!chest`, `!stop` or `!1v1` |
-| `!1v1` | You fight the trained axe fighter, then return to the base |
+| `!1v1` | One fight against the trained axe fighter, then you return to the base |
 | `!stop` | Stops everything and brings you back to the base |
 | `!help` | Lists the commands |
 
