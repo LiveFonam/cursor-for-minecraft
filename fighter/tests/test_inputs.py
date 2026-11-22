@@ -842,7 +842,7 @@ def test_opponent_facts_are_computed_once_per_step(monkeypatch):
     assert count["n"] == 1
 
 
-@pytest.mark.parametrize("name", sorted(SCRIPTED))
+@pytest.mark.parametrize("name", sorted(set(SCRIPTED) - {"synth"}))
 def test_scripted_opponents_act_only_for_their_arenas(name):
     sim = Sim(12, SimConfig(), seed=4)
     rows = np.array([2, 7, 9])

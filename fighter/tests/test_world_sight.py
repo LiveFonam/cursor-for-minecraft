@@ -439,7 +439,7 @@ def _sim_outputs(sim):
         out.append(build_masks(sim, seat).tobytes())
         yaw, pitch, flight = intercept_angles(sim, seat, np.full(sim.n, C.BOW_MAX_SPEED))
         out += [yaw.tobytes(), pitch.tobytes(), flight.tobytes()]
-        for name in sorted(SCRIPTED):
+        for name in sorted(set(SCRIPTED) - {"synth"}):  # synth refuses a block world
             out.append(SCRIPTED[name](sim, seat, np.random.default_rng(5)).tobytes())
     for arena in range(sim.n):
         for seat in (0, 1):

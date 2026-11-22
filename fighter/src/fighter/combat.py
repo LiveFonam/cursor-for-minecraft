@@ -396,6 +396,8 @@ class Combat:
         if sim.world is not None:
             hit, _cell, _face, dist = sim.world.ray_block_many(eye, look, C.ATTACK_REACH)
             reached &= ~(hit & (dist < entry))
+        elif sim.pillars is not None:
+            reached &= sim.pillars.view_open(np.arange(sim.n), eye, look, low[:, ::-1], high[:, ::-1])
         return reached
 
     def melee(self, attack: np.ndarray) -> None:
@@ -739,7 +741,8 @@ class Combat:
         sim = self.sim
         before = sim.body._before
         if sim.world is None:
-            return before[..., 1] + vy <= 1e-9
+            floor = 0.0 if sim.pillars is None else sim.pillars.floor_under(before)
+            return before[..., 1] + vy <= floor + 1e-9
         wanted = body & ~was_ground & (vy < 0.0)
         if not wanted.any():
             return wanted

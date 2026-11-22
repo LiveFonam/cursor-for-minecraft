@@ -105,6 +105,7 @@ REQUIRED = (
     ("axeman", "win", 0.80),
     ("pvp_combo", "win", 0.40),
     ("pvp_sweat", "win", 0.70),
+    ("synth", "win", 0.60),
 )
 REQUIRED_PENALTY = 1.0
 MIN_CHANGE = 0.25
@@ -616,6 +617,8 @@ class Evolution:
         self._commit_checked = -math.inf
         self._commit_free = 0.0
         self._commit_failures = 0
+        extra = PLANS[cfg.plan].named_opponents if cfg.plan else ()
+        self.opponents = tuple(OPPONENTS) + tuple(name for name in extra if name not in OPPONENTS)
 
     def log(self, event: str, **detail) -> None:
         with (self.root / "log.jsonl").open("a") as handle:
@@ -794,7 +797,7 @@ class Evolution:
         cfg = self.cfg
         tasks = []
         for name in names:
-            for opponent in OPPONENTS:
+            for opponent in self.opponents:
                 key = f"{name}|{SCRIPTED_TAG}{opponent}"
                 if key not in self.matches:
                     tasks.append(
@@ -898,7 +901,7 @@ class Evolution:
         self.play_all(names)
         named = {
             name: {
-                opponent: self.matches[f"{name}|{SCRIPTED_TAG}{opponent}"]["result"] for opponent in OPPONENTS
+                opponent: self.matches[f"{name}|{SCRIPTED_TAG}{opponent}"]["result"] for opponent in self.opponents
             }
             for name in names
         }
@@ -981,7 +984,7 @@ class Evolution:
         )
         tasks = []
         for name in candidates:
-            for opponent in OPPONENTS:
+            for opponent in self.opponents:
                 key = f"{name}|{RETEST_TAG}{generation}:{opponent}"
                 if key not in self.matches:
                     tasks.append(
@@ -999,7 +1002,7 @@ class Evolution:
             self.log("retest", generation=generation, count=len(tasks), games=self.cfg.retest_games)
             self._run_tasks(tasks)
         results = {
-            name: {opponent: self.matches[f"{name}|{RETEST_TAG}{generation}:{opponent}"]["result"] for opponent in OPPONENTS}
+            name: {opponent: self.matches[f"{name}|{RETEST_TAG}{generation}:{opponent}"]["result"] for opponent in self.opponents}
             for name in candidates
         }
         scores = {name: retest_fitness(rows) for name, rows in results.items()}
@@ -1038,7 +1041,7 @@ class Evolution:
 
     def _named_results(self, member: str) -> dict[str, dict]:
         out = {}
-        for opponent in OPPONENTS:
+        for opponent in self.opponents:
             row = self.matches.get(f"{member}|{SCRIPTED_TAG}{opponent}")
             if row is not None:
                 out[opponent] = row["result"]
@@ -1407,8 +1410,11 @@ def prepare(root: Path, given: dict) -> EvolveConfig:
         cfg = EvolveConfig(**given)
         if cfg.fight_setup not in FIGHT_SETUPS:
             raise SystemExit(f"unknown fight setup {cfg.fight_setup!r}, expected one of {sorted(FIGHT_SETUPS)}")
-        if cfg.plan is not None and cfg.plan not in PLANS:
+        if cfg.plan and cfg.plan not in PLANS:
             raise SystemExit(f"unknown plan {cfg.plan!r}, expected one of {sorted(PLANS)}")
+        needed = PLANS[cfg.plan].fight_setup if cfg.plan else None
+        if needed and cfg.fight_setup != needed:
+            raise SystemExit(f"plan {cfg.plan} plays in the fight setup {needed}")
         if cfg.n_parents < 1 or cfg.population < cfg.n_parents or cfg.children < 1:
             raise SystemExit("need at least one parent, one child and a population of at least the parents")
     root.mkdir(parents=True, exist_ok=True)
@@ -1458,7 +1464,7 @@ def build_parser() -> argparse.ArgumentParser:
         kind = float if item.type == "float" else int
         p.add_argument("--" + item.name.replace("_", "-"), type=kind, default=None)
     p.add_argument("--fight-setup", choices=sorted(FIGHT_SETUPS), default=None, help="the kit and arena to train and test in")
-    p.add_argument("--plan", choices=sorted(PLANS), default=None, help="train every founder under this plan")
+    p.add_argument("--plan", choices=sorted(PLANS), default=None, help="train every founder and child under this plan")
     p.add_argument("--parallel", type=int, default=None, help="children trained at once")
     p.add_argument("--rank-parallel", type=int, default=None, help="worker processes for ranking matches, 1 plays them in the driver")
     p.add_argument("--threads", type=int, default=None)

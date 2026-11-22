@@ -184,6 +184,14 @@ Fighter depends on these public libraries, installed through uv:
 Game constants come from the [Minecraft Wiki](https://minecraft.wiki). This project contains
 no Minecraft game files or decompiled code.
 
+Three practice opponents come from open source projects. `src/fighter/open_bots.py` rewrites the
+rules of [mineflayer-pvp](https://github.com/PrismarineJS/mineflayer-pvp) (MIT) and the Sweat tier of
+[mc-pvp-bots](https://github.com/FatihBastan/mc-pvp-bots) (MIT). `src/fighter/synth_bot.py` runs
+the trained network of
+[minecraft-pvp-neural-network](https://github.com/SynthSarcasm/minecraft-pvp-neural-network)
+by SynthSarcasm (MIT). Its code and weights stay outside this repository, found through `SYNTH_HOME` and
+`SYNTH_WEIGHTS`. Their license notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## License
 
 MIT, see [LICENSE](../LICENSE).

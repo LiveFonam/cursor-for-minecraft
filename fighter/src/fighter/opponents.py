@@ -12,8 +12,10 @@ from .combat import CHARGE_GATE
 from .farmwatch import fit_to_mask
 from .interface import SHARED, Interface
 from .obs import build_masks, intercept_angles, view_angles, wrap_degrees
+from .open_bots import mineflayer_pvp, sweat_sword
 from .policy import NumpyPolicy
 from .sim import Sim
+from .synth_bot import synth
 
 MAX_SNAPSHOTS = 12
 MAX_RIVALS = 12
@@ -75,9 +77,10 @@ class View:
 def read_facts(sim: Sim, seat: int) -> Facts:
     """Compute the shared facts of one seat."""
     other = 1 - seat
-    delta = sim.pos[:, other] - sim.pos[:, seat]
+    enemy = sim.pos[:, other] if sim.pillars is None else sim.perception.known_position(seat, slice(None))
+    delta = enemy - sim.pos[:, seat]
     eye = sim.pos[:, seat] + np.array([0.0, C.EYE_HEIGHT, 0.0])
-    chest = sim.pos[:, other] + np.array([0.0, C.PLAYER_HEIGHT / 2.0, 0.0])
+    chest = enemy + np.array([0.0, C.PLAYER_HEIGHT / 2.0, 0.0])
     want_yaw, want_pitch = view_angles(chest - eye)
     return Facts(
         distance=np.hypot(delta[:, 0], delta[:, 2]),
@@ -574,8 +577,19 @@ SCRIPTED = {
     "pvp_combo": pvp_combo,
     "pvp_sweat": pvp_sweat,
     "shield_holder": shield_holder,
+    "mineflayer_pvp": mineflayer_pvp,
+    "sweat_sword": sweat_sword,
+    "synth": synth,
 }
 HARD_SCRIPTED = ("pvp_basic", "pvp_combo", "pvp_sweat")
+# Played only when named, so they stay out of the training mixes and the "all" reports.
+try:  # an optional local opponent that is not part of this repository
+    from .custom_pvp_port import custom_pvp
+
+    SCRIPTED["custom_pvp"] = custom_pvp
+except ImportError:
+    pass
+OPEN_SOURCE_BOTS = tuple(name for name in ("mineflayer_pvp", "custom_pvp", "sweat_sword", "synth") if name in SCRIPTED)
 
 LEAGUE = "league"
 

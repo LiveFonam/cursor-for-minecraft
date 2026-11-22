@@ -158,8 +158,8 @@ def hit_margin(age: np.ndarray) -> np.ndarray:
     return np.minimum(np.maximum(grown, 0.0), HIT_MARGIN_MAX)
 
 
-def _arena_contact(sim, start: np.ndarray, vel: np.ndarray) -> np.ndarray:
-    """Return the fraction of the step at which an arrow meets the floor or a wall."""
+def _arena_contact(sim, start: np.ndarray, vel: np.ndarray, env: np.ndarray) -> np.ndarray:
+    """Return the fraction of the step at which an arrow meets the floor, a wall or a pillar."""
     half = sim.cfg.arena_half
     fraction = np.full(len(start), np.inf)
     down = vel[:, 1] < 0.0
@@ -171,6 +171,8 @@ def _arena_contact(sim, start: np.ndarray, vel: np.ndarray) -> np.ndarray:
         crossing[moving] = (wall[moving] - start[moving, axis]) / vel[moving, axis]
         fraction = np.minimum(fraction, crossing)
     fraction = np.maximum(fraction, 0.0)
+    if sim.pillars is not None:
+        fraction = np.minimum(fraction, sim.pillars.first_fraction(env, start, vel))
     return np.where(fraction <= 1.0, fraction, np.inf)
 
 
@@ -219,7 +221,7 @@ def step_arrows(sim) -> None:
     victim = 1 - owner
 
     if sim.world is None:
-        block_at = _arena_contact(sim, start, vel)
+        block_at = _arena_contact(sim, start, vel, env)
     else:
         block_at = _world_contact(sim, env, slot, start, vel)
 
@@ -462,7 +464,7 @@ def _target_ground(sim, seat: int, viewer: int) -> np.ndarray:
     A column the viewer has not seen gives no floor, so the target keeps falling.
     """
     if sim.world is None:
-        return np.zeros(sim.n)
+        return np.zeros(sim.n) if sim.pillars is None else sim.pillars.floor_under(sim.pos)[:, seat]
     from .world.view import RAY_BLOCKED
 
     view = sim.world_view()
@@ -513,6 +515,9 @@ def intercept(
     """
     at = slice(None) if rows is None else rows
     other = 1 - seat
+    if seen is None and sim.pillars is not None:
+        sight = sim.perception.enemy(seat, at)
+        seen = (sight.pos, np.where(sight.visible[:, None], target_motion(sim, other, at), sight.move), sight.visible)
     height = spawn_heights(sim)[at, seat]
     from_x = sim.pos[at, seat, 0]
     from_y = sim.pos[at, seat, 1] + height
