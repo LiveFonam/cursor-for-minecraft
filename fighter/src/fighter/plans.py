@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 
 from . import constants as C
 from .combat import CHARGE_GATE
-from .opponents import HARD_SCRIPTED, LEAGUE, SCRIPTED
+from .opponents import HARD_SCRIPTED, LEAGUE, OPEN_SOURCE_BOTS, SCRIPTED
 from .stance import StanceRules
 from .train import AXE_ONLY, CURRICULUM, Stage
 
@@ -17,13 +17,21 @@ COMBO_REWARD = {**FOUNDATION_REWARD, "followup": 1.5, "followup_unfaded": True, 
 
 @dataclass(frozen=True)
 class Plan:
-    """stages, reward overrides, scripted rules, charge input gate and adaptive final mix."""
+    """stages, reward overrides, scripted rules, charge input gate and adaptive final mix.
+
+    fight_setup: the setup this plan always plays in, when it has one.
+    arena_mix: the fixed opponent mix of an evolved child, in place of the default one.
+    named_opponents: opponents added to the ranking test of an evolution.
+    """
 
     stages: tuple[Stage, ...]
     reward: dict = field(default_factory=dict)
     stance: StanceRules | None = None
     ready_gate: float = C.FULL_CHARGE_THRESHOLD
     adaptive: bool = False
+    fight_setup: str | None = None
+    arena_mix: dict[str, float] | None = None
+    named_opponents: tuple[str, ...] = ()
 
 
 FOUNDATION_STAGES = tuple(
@@ -69,17 +77,44 @@ COMBO_STAGES = (
     ),
     Stage(
         "league",
-        {LEAGUE: 3.0, **{name: 1.0 for name in SCRIPTED if name != "idle"}},
+        {LEAGUE: 3.0, **{name: 1.0 for name in SCRIPTED if name != "idle" and name not in OPEN_SOURCE_BOTS}},
         2.0,
         0,
         0.4,
         AXE_CROSSBOW,
     ),
 )
+# About half of training is synth. The open source and hardest scripted bots share most of the rest.
+WALLS_MIX = {
+    "synth": 10.0,
+    "mineflayer_pvp": 1.25,
+    "custom_pvp": 1.25,
+    "sweat_sword": 1.25,
+    "pvp_combo": 1.25,
+    "pvp_sweat": 1.25,
+    "shield_holder": 0.75,
+    "pvp_basic": 0.5,
+    "rusher": 0.25,
+    "axeman": 0.25,
+    LEAGUE: 2.0,
+}
+if "custom_pvp" not in SCRIPTED:  # its share goes to the nearest bot, so synth stays at half
+    WALLS_MIX["mineflayer_pvp"] += WALLS_MIX.pop("custom_pvp")
+WALLS_STAGES = (*COMBO_STAGES[:-1], replace(COMBO_STAGES[-1], mix=dict(WALLS_MIX)))
 PLANS = {
     "melee": Plan(tuple(CURRICULUM)),
     "foundations": Plan(FOUNDATION_STAGES, FOUNDATION_REWARD, StanceRules(), CHARGE_GATE),
     "combo": Plan(COMBO_STAGES, COMBO_REWARD, StanceRules(followup=True), CHARGE_GATE, True),
+    "combo_walls": Plan(
+        WALLS_STAGES,
+        COMBO_REWARD,
+        StanceRules(followup=True, range_rules=True),
+        CHARGE_GATE,
+        False,
+        "diamond_20_walls",
+        WALLS_MIX,
+        OPEN_SOURCE_BOTS,
+    ),
 }
 ARENA_LEAGUE_WEIGHT = 4.0
 ARENA_HARD_WEIGHT = 2.0
@@ -90,8 +125,10 @@ ARENA_FOCUS = {"shield_holder": 1.5, "rusher": 1.0, "axeman": 1.0, "pvp_combo": 
 def arena_stage(plan: str) -> Stage:
     """Return the one stage of an evolved child: the league, the focus and hard fighters and the rest."""
     last = PLANS[plan].stages[-1]
+    if PLANS[plan].arena_mix is not None:
+        return Stage("arena", dict(PLANS[plan].arena_mix), 2.0, 0, last.shaping, last.weapons)
     mix = {LEAGUE: ARENA_LEAGUE_WEIGHT}
     for name in SCRIPTED:
-        if name != "idle":
+        if name != "idle" and name not in OPEN_SOURCE_BOTS:
             mix[name] = ARENA_FOCUS.get(name, ARENA_HARD_WEIGHT if name in HARD_SCRIPTED else ARENA_OTHER_WEIGHT)
     return Stage("arena", mix, 2.0, 0, last.shaping, last.weapons, keep=dict(ARENA_FOCUS))

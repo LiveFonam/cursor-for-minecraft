@@ -232,7 +232,7 @@ def _lead_slots(sim: Sim, seat: int, at, rows, yaw, pitch, sight, obs: np.ndarra
     """Fill slots 75 to 80 from a shot at where the enemy is known to be."""
     speed = arrows.aim_speed(sim, seat, at)
     seen = None
-    if sim.world is not None:
+    if sim.world is not None or sim.pillars is not None:
         visible = sight.visible
         velocity = np.where(visible[:, None], arrows.target_motion(sim, 1 - seat, at), sight.move)
         seen = (sight.pos, velocity, visible)
@@ -319,6 +319,8 @@ def _block_slots(sim: Sim, seat: int, at, eye, yaw, obs: np.ndarray) -> None:
     obs[:, WATER_SLOTS + 2] = 1.0
     if sim.world is None:
         free = R.flat_distances(eye - sim.origin, directions, sim.cfg.arena_half)
+        if sim.pillars is not None:
+            free = sim.pillars.limit_rays(np.arange(sim.n)[at], eye, directions, free)
         obs[:, RAY_SLOTS : RAY_SLOTS + R.RAY_COUNT] = free / R.RAY_RANGE
         return
     rows = np.arange(sim.n)[at]

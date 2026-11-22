@@ -46,6 +46,7 @@ class Perception:
         self.fresh_combo = np.ones((n, 2), dtype=bool)
         self.enemy_health = np.full((n, 2), C.MAX_HEALTH)
         self.last_action = np.tile(A.idle_action(), (n, 2, 1))
+        self.open_lines = np.ones((n, 2, SIGHT_LINES), dtype=bool)
 
     def reset(self, idx: np.ndarray) -> None:
         """Forget the selected arenas at round start."""
@@ -91,7 +92,7 @@ class Perception:
     def refresh(self, rows: np.ndarray | None = None) -> None:
         """Run the sight lines of the selected arenas, as part of the sight update."""
         sim = self.sim
-        if sim.world is None:
+        if sim.world is None and sim.pillars is None:
             return
         picked = np.arange(sim.n) if rows is None else np.asarray(rows)
         if len(picked) == 0:
@@ -113,6 +114,13 @@ class Perception:
         targets[..., 3, 1] += CHEST_HEIGHT
         hit_point = eyes + look * entry[..., None]
         targets[:, :, 3] = np.where(aimed[..., None], hit_point, targets[:, :, 3])
+        if sim.world is None:
+            self.open_lines[picked] = sim.pillars.clear_lines(picked, eyes, targets)
+            for seat in (0, 1):
+                shown = picked[self.open_lines[picked, seat, :BODY_LINES].any(axis=1)]
+                self.seen_pos[shown, seat] = sim.pos[shown, 1 - seat]
+                self.seen_move[shown, seat] = sim.body.last_move[shown, 1 - seat]
+            return
         view = sim.world_view()
         view.update_lines(picked, eyes, sim.yaw[picked], sim.pitch[picked], targets)
         for seat in (0, 1):
@@ -124,10 +132,13 @@ class Perception:
         """Return the enemy as this seat knows it, from its last sight update."""
         sim = self.sim
         you = 1 - seat
-        if sim.world is None:
+        if sim.world is None and sim.pillars is None:
             return EnemySight(sim.pos[at, you], sim.body.last_move[at, you], True, True, True)
         rows = np.arange(sim.n)[at]
-        clear = sim.world_view().lines_seen(rows, seat, SIGHT_LINES)
+        if sim.world is None:
+            clear = self.open_lines[rows, seat]
+        else:
+            clear = sim.world_view().lines_seen(rows, seat, SIGHT_LINES)
         visible = clear[:, :BODY_LINES].any(axis=1)
         return EnemySight(
             self.seen_pos[rows, seat].copy(), self.seen_move[rows, seat].copy(), visible, clear[:, 0], clear[:, 3]
@@ -136,6 +147,6 @@ class Perception:
     def known_position(self, seat: int, at) -> np.ndarray:
         """Return the last known enemy feet without refreshing sight."""
         sim = self.sim
-        if sim.world is None:
+        if sim.world is None and sim.pillars is None:
             return sim.pos[at, 1 - seat]
         return self.seen_pos[at, seat]

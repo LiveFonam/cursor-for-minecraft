@@ -20,13 +20,27 @@ ENEMY_HURT = 46
 ENEMY_SHIELD_UP = 52
 ENEMY_SHIELD_DISABLED = 54
 ENEMY_FACING = 55
+ENEMY_CLEAR_LINE = 37
+AIM_WIDTHS = 79
+AIM_WIDTH_SCALE = 5.0
+GUN_MIN_RANGE = 4.5
+GUN_FORCE_RANGE = 7.0
+GUN_REST_DECISIONS = 8
+AIM_COS = 27
+CHASE_RANGE = 3.5
+CHASE_FACING = 0.7
 
 
 @dataclass(frozen=True)
 class StanceRules:
-    """followup: fire right after a shield disable and hold fire in the enemy hurt window."""
+    """followup: fire right after a shield disable and hold fire in the enemy hurt window.
+
+    range_rules: force the crossbow at range, with aim lock, reloads and clean shots, put it away close in,
+    and run at an enemy out of axe reach. These are the range habits of the live client, bridge/fighter.js.
+    """
 
     followup: bool = False
+    range_rules: bool = False
 
 
 def _fix(mask: np.ndarray, rows: np.ndarray, head: int, choice: int) -> None:
@@ -47,6 +61,70 @@ def _axe_reach(sim, seat: int, picked: np.ndarray) -> np.ndarray:
     high = target + np.array([half, C.PLAYER_HEIGHT, half])
     nearest = np.minimum(np.maximum(eye, low), high)
     return np.linalg.norm(nearest - eye, axis=1) <= AXE_RANGE
+
+
+def _apply_range(
+    sim,
+    seat: int,
+    picked: np.ndarray,
+    mask: np.ndarray,
+    obs: np.ndarray,
+    active: np.ndarray,
+    weapon: np.ndarray,
+    load: np.ndarray,
+    can_crossbow: np.ndarray,
+    can_axe: np.ndarray,
+) -> None:
+    """Force the crossbow habits on the rows in `active`.
+
+    A round's rest count falls once per decision, even if the masks are read twice in it.
+    """
+    if "stance_rest" not in sim.__dict__:
+        sim.stance_rest = np.zeros((sim.n, 2), dtype=np.int64)
+        sim.stance_stamp = np.full((sim.n, 2), -1, dtype=np.int64)
+    rest, stamp = sim.stance_rest, sim.stance_stamp
+    rest[picked[sim.ticks[picked] == 0], seat] = 0
+    rows = np.flatnonzero(active)
+    if len(rows) == 0:
+        return
+    arenas = picked[rows]
+    fresh = stamp[arenas, seat] != sim.ticks[arenas]
+    rest[arenas[fresh], seat] = np.maximum(rest[arenas[fresh], seat] - 1, 0)
+    stamp[arenas, seat] = sim.ticks[arenas]
+
+    start = int(A.HEAD_OFFSETS[A.WEAPON])
+    size = int(A.NVEC[A.WEAPON])
+    crossbow = int(A.WEAPON_ACTION[C.CROSSBOW])
+    axe = int(A.WEAPON_ACTION[C.AXE])
+    seen = obs[rows, ENEMY_IN_SIGHT] > 0.5
+    distance = obs[rows, ENEMY_FLAT_DISTANCE] * 32.0
+    in_range = distance >= GUN_MIN_RANGE
+    guarded = in_range & (obs[rows, ENEMY_SHIELD_UP] > 0.5) & (obs[rows, ENEMY_FACING] > 0.0)
+    holding = weapon[rows] == C.CROSSBOW
+    loaded = sim.loaded[arenas, seat]
+    stocked = sim.ammo[arenas, seat] > 0
+
+    chase = (weapon[rows] == C.AXE) & seen & (distance >= CHASE_RANGE) & (obs[rows, AIM_COS] > CHASE_FACING)
+    _fix(mask, rows[chase], A.FORWARD, A.KEY_FORWARD)
+    _fix(mask, rows[chase], A.SPRINT, 1)
+
+    rest[arenas[guarded], seat] = GUN_REST_DECISIONS
+    sim.stance_opening[arenas[guarded], seat] = False
+    away = rows[guarded & ~holding]
+    others = mask[away, start : start + size].sum(axis=1) - mask[away, start + crossbow]
+    mask[away[others > 0], start + crossbow] = False
+    _fix(mask, rows[guarded & holding & (load[rows] == 0) & can_axe[rows]], A.WEAPON, axe)
+
+    force = ~guarded & seen & can_crossbow[rows] & (rest[arenas, seat] == 0) & (loaded | stocked)
+    _fix(mask, rows[force & (distance >= GUN_FORCE_RANGE)], A.WEAPON, crossbow)
+    gun = ~guarded & holding & seen & in_range
+    _fix(mask, rows[gun], A.LOCK_AIM, 1)
+    _fix(mask, rows[gun & ~loaded & stocked], A.USE, 1)
+    lined_up = (obs[rows, AIM_WIDTHS] * AIM_WIDTH_SCALE < 1.0) & (obs[rows, ENEMY_CLEAR_LINE] > 0.5)
+    clean = lined_up & (obs[rows, ENEMY_HURT] <= HURT_WINDOW)
+    press = gun & loaded & clean & ~sim.use_prev[arenas, seat]
+    _fix(mask, rows[press], A.USE, 1)
+    _fix(mask, rows[gun & loaded & ~press], A.USE, 0)
 
 
 def apply_stance(
@@ -73,7 +151,16 @@ def apply_stance(
 
     loading = opening[picked, seat] | (load > 0)
     hurt = sim.hurt_timer[picked, seat] > 0
-    abort = loading & hurt & (load / C.CROSSBOW_LOAD_TICKS < ABORT_PROGRESS) & can_axe
+    full_obs = None
+    closing = np.zeros(len(picked), dtype=bool)
+    stop_load = hurt
+    if rules.range_rules:
+        full_obs = build_obs(sim, seat, 600, picked)
+        distance = full_obs[:, ENEMY_FLAT_DISTANCE] * 32.0
+        closing = distance < GUN_MIN_RANGE
+        guarded = ~closing & (full_obs[:, ENEMY_SHIELD_UP] > 0.5) & (full_obs[:, ENEMY_FACING] > 0.0)
+        stop_load = hurt | closing | guarded
+    abort = loading & stop_load & (load / C.CROSSBOW_LOAD_TICKS < ABORT_PROGRESS) & can_axe
     opening[picked[abort], seat] = False
     carry = loading & ~abort & can_crossbow
     _fix(mask, np.flatnonzero(abort), A.WEAPON, axe)
@@ -85,7 +172,7 @@ def apply_stance(
     window = np.zeros(len(picked), dtype=bool)
     ready = np.flatnonzero(free & loaded)
     if len(ready):
-        obs = build_obs(sim, seat, 600, picked[ready])
+        obs = build_obs(sim, seat, 600, picked[ready]) if full_obs is None else full_obs[ready]
         holding = weapon[ready] == C.CROSSBOW
         fresh = ~sim.use_prev[picked[ready], seat]
         seen = obs[:, ENEMY_IN_SIGHT] > 0.5
@@ -106,7 +193,9 @@ def apply_stance(
         _fix(mask, ready[shot], A.WEAPON, crossbow)
         _fix(mask, ready[shot & holding], A.LOCK_AIM, 1)
 
-    near = np.flatnonzero(free & ~window & can_axe & _axe_reach(sim, seat, picked))
+    if rules.range_rules:
+        _apply_range(sim, seat, picked, mask, full_obs, ~abort & ~window, weapon, load, can_crossbow, can_axe)
+    near = np.flatnonzero(free & ~window & can_axe & (closing | _axe_reach(sim, seat, picked)))
     mask[near, start + crossbow] = False
     mask[near[weapon[near] == C.CROSSBOW], start + A.WEAPON_KEEP] = False
     return mask

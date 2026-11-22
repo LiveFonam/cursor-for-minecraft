@@ -241,7 +241,7 @@ def test_behaviour_report_lists_the_hard_fighters():
     assert set(HARD_SCRIPTED) <= set(OPPONENTS)
 
 
-@pytest.mark.parametrize("plan", sorted(PLANS))
+@pytest.mark.parametrize("plan", sorted(name for name, plan in PLANS.items() if plan.arena_mix is None))
 def test_arena_stage_keeps_the_plan_weapons_and_favors_hard_fighters(plan):
     stage = arena_stage(plan)
     assert stage.weapons == PLANS[plan].stages[-1].weapons
@@ -808,7 +808,7 @@ def test_shield_holder_is_in_the_shield_late_and_report_lists_and_shielder_stays
         assert PLANS[name].stages[-1].mix["shield_holder"] > 0.0
 
 
-@pytest.mark.parametrize("plan", sorted(PLANS))
+@pytest.mark.parametrize("plan", sorted(name for name, plan in PLANS.items() if plan.arena_mix is None))
 def test_the_arena_mix_keeps_the_focus_opponents_when_it_adapts(plan):
     stage = arena_stage(plan)
     assert set(stage.keep) == {"shield_holder", "rusher", "axeman", "pvp_combo", "pvp_sweat"}

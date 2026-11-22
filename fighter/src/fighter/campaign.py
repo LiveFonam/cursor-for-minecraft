@@ -59,7 +59,7 @@ from .experts import (
 )
 from .farmwatch import FarmWatch, WatchSettings, merge_tallies
 from .lean import EnvSpec, FIGHT, LeanConfig, LeanTrainer, free_memory_gb, pack_env, unpack_env
-from .opponents import SCRIPTED, OpponentPool
+from .opponents import OPEN_SOURCE_BOTS, SCRIPTED, OpponentPool
 from .policy import NumpyPolicy
 from .sim import SimConfig
 from .plans import PLANS, arena_stage
@@ -109,6 +109,11 @@ class CampaignConfig:
     arena: bool = False
     reward: dict | None = None
     fight_setup: str = "standard"
+
+    def __post_init__(self) -> None:
+        plan = PLANS.get(self.plan)
+        if plan is not None and plan.fight_setup is not None:
+            self.fight_setup = plan.fight_setup
 
 
 SMOKE = {
@@ -1066,7 +1071,7 @@ def main(argv: list[str] | None = None) -> int:
         (root / "STOP").touch()
         print(f"stop requested in {root}")
         return 0
-    names = sorted(SCRIPTED) if args.opponent == "all" else [args.opponent]
+    names = sorted(set(SCRIPTED) - set(OPEN_SOURCE_BOTS)) if args.opponent == "all" else [args.opponent]
     print(json.dumps(evaluate_fighter(root, names, args.games), indent=2))
     return 0
 

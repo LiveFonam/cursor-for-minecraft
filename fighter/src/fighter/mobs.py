@@ -1165,7 +1165,7 @@ class Mobs:
         start = sim.arrow_pos[env, slot]
         vel = sim.arrow_vel[env, slot]
         if sim.world is None:
-            block_at = arrows._arena_contact(sim, start, vel)
+            block_at = arrows._arena_contact(sim, start, vel, env)
         else:
             block_at = arrows._world_contact(sim, env, slot, start, vel)
         margin = arrows.hit_margin(sim.arrow_age[env, slot] + 1)[:, None]
