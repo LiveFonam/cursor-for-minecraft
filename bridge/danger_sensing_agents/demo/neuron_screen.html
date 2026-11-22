@@ -245,6 +245,50 @@ function drawNode (x, y, r, value, col, i) {
   ctx.stroke()
 }
 
+// Runs of neighbouring neurons in one named cluster
+function clustersOf (layer) {
+  const out = []
+  neuronsOf(layer).forEach((n, i) => {
+    if (!n.cluster) return
+    const last = out[out.length - 1]
+    if (last?.name === n.cluster) last.to = i
+    else out.push({ name: n.cluster, from: i, to: i })
+  })
+  return out
+}
+
+function drawClusters (layer) {
+  const L = state.layout
+  const side = layer === 1 ? -1 : 1
+  const r = L.radius[layer]
+  const x = L.xs[layer] + side * (r + 4)
+  const room = (L.xs[2] - L.xs[1]) * 0.44
+  ctx.font = `600 ${L.font}px system-ui, sans-serif`
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = side < 0 ? 'right' : 'left'
+  for (const c of clustersOf(layer)) {
+    const y0 = nodeY(layer, c.from) - r
+    const y1 = nodeY(layer, c.to) + r
+    const mid = (y0 + y1) / 2
+    ctx.strokeStyle = SOFT
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x - side * 2, y0)
+    ctx.lineTo(x, y0)
+    ctx.lineTo(x, y1)
+    ctx.lineTo(x - side * 2, y1)
+    ctx.stroke()
+    const text = fitText(`${c.name} (${c.to - c.from + 1})`, room)
+    const tx = x + side * 5
+    const wide = ctx.measureText(text).width
+    ctx.fillStyle = '#1a1a19'
+    ctx.fillRect(side < 0 ? tx - wide - 2 : tx - 2, mid - L.font * 0.75, wide + 4, L.font * 1.5)
+    ctx.fillStyle = INK
+    ctx.fillText(text, tx, mid)
+  }
+  ctx.font = `${L.font}px system-ui, sans-serif`
+}
+
 function draw () {
   state.queued = false
   const m = state.meta
@@ -284,6 +328,8 @@ function draw () {
   for (const layer of [1, 2]) {
     neuronsOf(layer).forEach((_, i) => drawNode(L.xs[layer], nodeY(layer, i), L.radius[layer], state.levels[layer][i] ?? 0, layer, i))
   }
+  drawClusters(1)
+  drawClusters(2)
   const drive = f ? headDrive(f) : []
   const nameRoom = L.narrow ? 54 : 66
   m.heads.forEach((head, i) => {
@@ -397,7 +443,7 @@ function fillTip () {
     section('Pushed by', liveLinks(col, i, 'in'), 'No strong line right now')
   } else {
     const n = neuronsOf(col)[i] || {}
-    sub.textContent = `Layer ${col}, neuron ${n.id ?? i}`
+    sub.textContent = `${n.cluster ? `${n.cluster}, ` : ''}layer ${col}, neuron ${n.id ?? i}`
     const raw = f?.[`raw${col}`]?.[i]
     value.textContent = Number.isFinite(raw) ? `Live ${raw.toFixed(2)}` : 'No live value yet'
     tip.append(sub, value)

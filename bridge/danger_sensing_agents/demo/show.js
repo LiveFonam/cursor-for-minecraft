@@ -2,6 +2,7 @@
 // Everything goes through the server console, so no fighter input can read it.
 
 const BAR = 'demo:countdown'
+const NAME_TEAM = 'demo_fighter'
 const HEALTH = 'demo_health'
 const HOLD = 'demo:countdown_hold'
 const HELD = ['movement_speed', 'jump_strength']
@@ -69,8 +70,18 @@ async function countdown ({ send, sleep, viewer, names, pins = [], live = () => 
 }
 
 // Safe to run twice, and after a fight that never started
-function clearCommands (names) {
-  return [...holdCommands(names, false), `bossbar remove ${BAR}`, `scoreboard objectives remove ${HEALTH}`]
+// The name over the fighter's head: its login, then its version from a team suffix, since a login can not hold spaces
+function nameCommands (login, label) {
+  return [
+    `team add ${NAME_TEAM}`,
+    `team empty ${NAME_TEAM}`,
+    `team modify ${NAME_TEAM} suffix ${JSON.stringify({ text: label ? ` - ${label}` : '' })}`,
+    `team join ${NAME_TEAM} ${login}`
+  ]
 }
 
-module.exports = { healthCommands, seedHealth, holdCommands, countdown, clearCommands, BAR, HEALTH, FIGHT_TEXT_MS }
+function clearCommands (names) {
+  return [...holdCommands(names, false), `bossbar remove ${BAR}`, `scoreboard objectives remove ${HEALTH}`, `team remove ${NAME_TEAM}`]
+}
+
+module.exports = { nameCommands, healthCommands, seedHealth, holdCommands, countdown, clearCommands, BAR, HEALTH, FIGHT_TEXT_MS }

@@ -55,6 +55,13 @@ const GUN_REST_STEPS = 8      // decisions the crossbow stays away after a shiel
 const CHASE_RANGE = 3.5       // with the axe out it runs at an enemy further than this
 const CHASE_FACING = 0.7      // only while roughly facing it
 const INPUT_AIM_COS = 27
+const INPUT_AIM_SIN = 26
+const INPUT_PITCH_ERROR = 28
+const MELEE_AIM_RANGE = 6     // inside this the axe keeps the crosshair on the enemy's chest, in the normal turn steps
+const CRIT_RANGE = 3.6        // a jump from here can still come down on the enemy
+const CRIT_JUMP_CHARGE = 0.6  // a jump starts falling after about 0.4 s, so the swing is charged by then
+const SWING_CHARGE = 0.9
+const CRIT_HOLD_MAX = 5       // decisions, the longest a charged swing waits for the fall
 const BOW_SPEED = 3.0
 const BOW_FULL_DRAW_TICKS = 20
 const BOW_MIN_DRAW_TICKS = 3
@@ -545,6 +552,7 @@ class Fighter {
     this.borderHalf = options.arena?.half ?? 12
     this.planRules = options.planRules ?? !!options.arena
     this.rangeRules = !!options.rangeRules
+    this.meleeRules = !!options.meleeRules
     this.gunForceRange = options.gunForceRange ?? GUN_FORCE_RANGE
     this.readyGate = options.readyGate ?? (this.planRules ? PLAN_READY_GATE : FULL_CHARGE)
     this.allowedWeapons = options.allowedWeapons ?? (this.planRules ? new Set(['axe', 'sword', 'crossbow']) : null)
@@ -1132,6 +1140,49 @@ class Fighter {
     return Math.hypot(dx, dy, dz) <= AXE_RULE_RANGE
   }
 
+  // With the axe: track the enemy, jump when a charged swing can come down on them, drop the sprint in the air so the hit
+  // can crit, and swing only when it can land for real damage. A raised shield leaves the swing to the network
+  applyMeleeRules (fix, obs, distance) {
+    const me = this.bot.entity
+    if (this.weapon() !== 'axe' || this.shieldUp || obs[INPUT_ENEMY_IN_SIGHT] <= 0.5 || !me) {
+      this.critHeld = 0
+      return
+    }
+    const nearest = (steps, want) => steps.reduce((best, v, i) => (Math.abs(v - want) < Math.abs(steps[best] - want) ? i : best), 0)
+    if (distance < MELEE_AIM_RANGE) {
+      fix(YAW, nearest(YAW_STEPS, Math.atan2(obs[INPUT_AIM_SIN], obs[INPUT_AIM_COS]) * 180 / Math.PI))
+      fix(PITCH, nearest(PITCH_STEPS, obs[INPUT_PITCH_ERROR] * 90))
+    }
+    const guarded = obs[INPUT_ENEMY_SHIELD_UP] > 0.5
+    const charge = this.charge()
+    let jumped = false
+    if (!guarded && this.crosshairOnEnemy(CRIT_RANGE)) {
+      if (!me.onGround) fix(SPRINT, 0)
+      else if (charge >= CRIT_JUMP_CHARGE) {
+        fix(JUMP, 1)
+        jumped = true
+      }
+    }
+    if (!this.crosshairOnEnemy()) {
+      this.critHeld = 0
+      fix(ATTACK, 0)
+    } else if (guarded) {
+      this.critHeld = 0
+    } else if (charge < SWING_CHARGE) {
+      fix(ATTACK, 0)
+    } else {
+      const falling = !me.onGround && this.fall > 0 && me.velocity.y < 0
+      const waiting = me.onGround ? jumped : !falling
+      if (waiting && (this.critHeld ?? 0) < CRIT_HOLD_MAX) {
+        this.critHeld = (this.critHeld ?? 0) + 1
+        fix(ATTACK, 0)
+      } else {
+        this.critHeld = 0
+        fix(ATTACK, 1)
+      }
+    }
+  }
+
   // The range habits. Past 7 blocks the crossbow is out, from 4.5 blocks it locks on, reloads the moment it is empty and
   // fires the moment the aim is on a target with no shield facing it. A raised shield facing it sends it back to the axe
   // for a moment, and with the axe out it runs at an enemy that is out of reach
@@ -1214,6 +1265,7 @@ class Fighter {
       }
     }
     if (this.rangeRules && !abort && !followUp) this.applyRangeRules(mask, at, fix, obs, distance, canCrossbow, canAxe, axe, crossbow)
+    if (this.meleeRules && !abort && !followUp) this.applyMeleeRules(fix, obs, distance)
     if (!abort && !carry && !followUp && canAxe && (closing || this.axeInRuleRange())) {
       mask[at + crossbow] = 0
       if (holding) mask[at] = 0
@@ -1470,6 +1522,7 @@ class Fighter {
     this.lastObs = null
     this.openingLoad = true
     this.noGunSteps = 0
+    this.critHeld = 0
     this.shieldUp = false
     this.secondClick = false
     this.ticksSinceSwing = 1000

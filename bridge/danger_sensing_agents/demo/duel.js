@@ -82,18 +82,24 @@ async function main (cfg) {
     planRules: true,
     allowedWeapons: new Set(TRAINED_WEAPONS),
     rangeRules: true,
+    meleeRules: process.env.DEMO_MELEE_RULES === '1',
     gunForceRange: Number(process.env.DEMO_GUN_RANGE) || undefined
   })
   fighter.setFairHealth(!!info?.fair, 'player', false)
   let fighting = false
   let thinking = false
+  let pending = IDLE_ACTION  // the choice made one decision ago, which is 100 ms of ping
   let ticks = 0
   bot.on('physicsTick', () => {
     if (!fighting || thinking || bot.health <= 0 || ++ticks % TICKS_PER_STEP) return
     thinking = true
     Promise.resolve()
       .then(() => policy.act(bot.username, fighter.observe(), fighter.masks()))
-      .then(action => { if (fighting) fighter.act(action || IDLE_ACTION) })
+      .then(action => {
+        if (!fighting) return
+        fighter.act(pending)
+        pending = action || IDLE_ACTION
+      })
       .catch(err => log(err.message))
       .finally(() => { thinking = false })
   })
@@ -108,6 +114,7 @@ async function main (cfg) {
     if (line.trim() !== 'go' || fighting) return
     fighter.reset()
     fighter.selectSlot(SLOT_AXE)
+    pending = IDLE_ACTION
     fighting = true
   }).on('close', () => quit(0))
   emit('ready')

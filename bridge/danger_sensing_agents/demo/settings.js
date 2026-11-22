@@ -2,12 +2,15 @@
 //
 //   DEMO_PLAYER          the one player who may drive the demo (falls back to the agents' owner)
 //   DEMO_AGENT           the agent in the scene (falls back to the first configured bot)
-//   DEMO_FIGHTER_NAME    the login of the 1v1 fighter (default FNN)
+//   DEMO_FIGHTER_NAME    the login of the 1v1 fighter (default FNNs)
+//   DEMO_FIGHTER_LABEL   the version shown after its name (default the name of its run folder, like g05-04)
 //   DEMO_FIGHTER_RUN     the fighter network to load for the 1v1 (falls back to AGENTS_FIGHTER_RUN)
 //   DEMO_AGENT_RUN       the network the agent fights mobs with (falls back to DEMO_FIGHTER_RUN, then the agents' config)
 //   DEMO_FIGHTER_CLIENT  the fighter client file (default bridge/fighter.js)
 //   DEMO_POLICY          the 1v1 policy loader file (default demo/neuron_policy.py, the fighter with its live neuron screen)
 //   DEMO_DUEL            a module with its own spawnDuel, for a fighter that brings its own client and loader
+//   DEMO_GUN_RANGE       blocks from which the 1v1 fighter always takes out its crossbow (default 7)
+//   DEMO_MELEE_RULES     1 turns on the experimental forced axe aim and crit jumps, off by default
 //   DEMO_NEURONS_PORT    the port of the neuron screen on this machine, 0 for no screen (default 8770)
 //   DEMO_PYTHON          the Python that runs the policy loader
 //   DEMO_STAGE           x,y,z of the scene, feet level (default: where the agent stands when the demo starts)
@@ -65,8 +68,9 @@ function loadSettings (env = process.env, config = loadConfig({ env, ownerRequir
   const settings = {
     player: checkName('DEMO_PLAYER', player),
     agent: checkName('DEMO_AGENT', env.DEMO_AGENT || config.bots[0]),
-    fighterName: checkName('DEMO_FIGHTER_NAME', env.DEMO_FIGHTER_NAME || 'FNN'),
+    fighterName: checkName('DEMO_FIGHTER_NAME', env.DEMO_FIGHTER_NAME || 'FNNs'),
     fighterRun: path.resolve(SOURCE_ROOT, run),
+    fighterLabel: env.DEMO_FIGHTER_LABEL ?? (/^g\d+-\d+$/.test(path.basename(String(run))) ? path.basename(String(run)) : ''),
     agentRun: path.resolve(SOURCE_ROOT, env.DEMO_AGENT_RUN || run),
     fighterClient: path.resolve(env.DEMO_FIGHTER_CLIENT || path.join(SOURCE_ROOT, 'bridge', 'fighter.js')),
     policyScript: path.resolve(env.DEMO_POLICY || path.join(__dirname, 'neuron_policy.py')),

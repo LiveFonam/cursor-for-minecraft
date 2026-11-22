@@ -130,7 +130,7 @@ Claude Haiku picks each plan from a fixed menu: which wall, where along it, how 
 !1v1
 ```
 
-You and the trained axe fighter, who logs in as `FNN`, go to a yellow and black 20 by 20 arena in full diamond with an axe, sword, shield, crossbow and bow. Both of you are in adventure mode, so nothing can be broken or placed.
+You and the trained axe fighter, shown as `FNNs` and its version, go to a yellow and black 20 by 20 arena in full diamond with an axe, sword, shield, crossbow and bow. Your crossbow starts loaded, and the fighter plays with 100 ms of ping. Both of you are in adventure mode, so nothing can be broken or placed.
 
 Every fight gets fresh cover: 1 or 2 pairs of solid gray pillars. Each pair is mirrored across the middle of the arena, so neither side is better, and stays away from both spawn spots. The pillars are gone when the fight ends.
 
@@ -144,7 +144,7 @@ To watch the fighter think, see [the live neuron screen](#the-live-neuron-screen
 
 ## A match in its own world
 
-This runs the same fight without the walkthrough. One command starts a separate Paper server with its own flat world, waits for you to join, plays a best of 3 (first to 2 wins) with a short score message between fights, and stops that server when it ends. A drawn fight does not count, and a match is at most 5 fights.
+This runs the same fight without the walkthrough. One command starts a separate Paper server with its own flat world, which stays up between matches. Type `go` in chat to start a best of 3 (first to 2 wins). A drawn fight gives the point to the fighter. When the match ends, the score resets and the server waits for your next `go`.
 
 Before the first run:
 
@@ -167,7 +167,7 @@ While a fight runs, in either version, open <http://127.0.0.1:8770>. The page ke
 
 It has four columns: the input groups, 32 neurons from layer 1, 32 from layer 2, and the 11 action heads with the choice each one picked. A brighter blue node is more active. Lines are the strongest connections at this moment, blue when they excite and red when they inhibit, and thicker lines are stronger. Hover over anything to read its name, live value, what it is high and low on, what it reads and what it pushes.
 
-Names only appear when they were measured on the exact network that is fighting. Otherwise the page says so and shows `Neuron <id>`, with the live connections but no made-up meaning.
+Neurons are grouped into named clusters, such as crits and jumps, shields, crossbow and the sprint jump crit range. The names are labels for what each group was measured tracking, and they only appear on the exact network they were measured on. Otherwise the page says so and shows `Neuron <id>`, with the live connections but no made-up meaning.
 
 The fight never waits for the page. Set `DEMO_NEURONS_PORT` to use another port, or to 0 for no screen.
 

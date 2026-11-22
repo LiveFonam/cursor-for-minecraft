@@ -1,0 +1,2887 @@
+{
+ "fighter": "g01-00",
+ "policy_sha256": "f6f4592580fda8815f18ac492120b1a9d6e3f1bae727c2e4d6f0fc1f78a2e5a4",
+ "how": "Clusters and names are labels for what groups of neurons were measured tracking in simulated fights. high_when and low_when hold area under the curve scores from 0 to 1.",
+ "neurons": [
+  {
+   "layer": 1,
+   "id": 33,
+   "name": "Crit Window",
+   "importance_rank": 1,
+   "runup": 0.488,
+   "importance": 0.0428,
+   "fires": 0.503,
+   "scale": 1.729,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.88
+    ],
+    [
+     "about to land a crit",
+     0.87
+    ],
+    [
+     "crosshair on enemy",
+     0.86
+    ]
+   ],
+   "low_when": [
+    [
+     "attack charging",
+     0.16
+    ],
+    [
+     "enemy in hurt window",
+     0.19
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "attack ready",
+    "enemy forward speed"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "attack double"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 42,
+   "name": "Quiet: Enemy in Hurt Window",
+   "importance_rank": 8,
+   "runup": 0.499,
+   "importance": 0.0217,
+   "fires": 0.747,
+   "scale": 2.398,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.83
+    ],
+    [
+     "own shield disabled",
+     0.74
+    ],
+    [
+     "holding axe",
+     0.7
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.2
+    ],
+    [
+     "enemy past 6 blocks",
+     0.21
+    ]
+   ],
+   "reads": [
+    "own shield disabled",
+    "enemy holds axe",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "attack none",
+    "jump off",
+    "forward W"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 64,
+   "name": "Quiet: Rising",
+   "importance_rank": 12,
+   "runup": 0.482,
+   "importance": 0.019,
+   "fires": 0.652,
+   "scale": 1.914,
+   "high_when": [
+    [
+     "own shield disabled",
+     0.75
+    ],
+    [
+     "about to land a crit",
+     0.75
+    ],
+    [
+     "crosshair on enemy",
+     0.74
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy using ranged",
+     0.22
+    ],
+    [
+     "rising",
+     0.22
+    ]
+   ],
+   "reads": [
+    "pitch error fine",
+    "own shield disabled",
+    "ranged lead 78"
+   ],
+   "pushes": [
+    "attack click",
+    "attack double",
+    "sneak off"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 242,
+   "name": "Quiet: Enemy to My Right",
+   "importance_rank": 14,
+   "runup": 0.495,
+   "importance": 0.0185,
+   "fires": 0.694,
+   "scale": 2.271,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.85
+    ],
+    [
+     "in the air with the axe",
+     0.78
+    ],
+    [
+     "falling",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.15
+    ],
+    [
+     "enemy to my right",
+     0.16
+    ]
+   ],
+   "reads": [
+    "last forward key",
+    "enemy holds sword",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "attack none"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 19,
+   "name": "Own Shield Disabled",
+   "importance_rank": 19,
+   "runup": 0.422,
+   "importance": 0.0166,
+   "fires": 0.517,
+   "scale": 1.719,
+   "high_when": [
+    [
+     "enemy holds axe",
+     0.95
+    ],
+    [
+     "own shield disabled",
+     0.82
+    ],
+    [
+     "enemy shield up and facing",
+     0.82
+    ]
+   ],
+   "low_when": [
+    [
+     "in the air with the axe",
+     0.24
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.24
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "own shield disabled",
+    "enemy holds axe"
+   ],
+   "pushes": [
+    "use on",
+    "forward S",
+    "weapon keep"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 246,
+   "name": "Attack Ready",
+   "importance_rank": 23,
+   "runup": 0.459,
+   "importance": 0.0156,
+   "fires": 0.687,
+   "scale": 1.854,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.85
+    ],
+    [
+     "attack ready",
+     0.8
+    ],
+    [
+     "about to land a crit",
+     0.77
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy to my right",
+     0.13
+    ],
+    [
+     "enemy in hurt window",
+     0.17
+    ]
+   ],
+   "reads": [
+    "enemy on ground",
+    "ranged lead 75",
+    "yaw error fine"
+   ],
+   "pushes": [
+    "jump off",
+    "attack click",
+    "use off"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 199,
+   "name": "Quiet: on the Ground",
+   "importance_rank": 24,
+   "runup": 0.555,
+   "importance": 0.0152,
+   "fires": 0.861,
+   "scale": 2.549,
+   "high_when": [
+    [
+     "in the air with the axe",
+     0.88
+    ],
+    [
+     "enemy below me",
+     0.84
+    ],
+    [
+     "falling",
+     0.82
+    ]
+   ],
+   "low_when": [
+    [
+     "on the ground",
+     0.12
+    ],
+    [
+     "enemy to my right",
+     0.12
+    ]
+   ],
+   "reads": [
+    "time since enemy swing",
+    "enemy using ranged",
+    "ranged lead 79"
+   ],
+   "pushes": [
+    "attack double",
+    "lock aim off",
+    "forward W"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 61,
+   "name": "in the Air with the Axe",
+   "importance_rank": 27,
+   "runup": 0.502,
+   "importance": 0.015,
+   "fires": 0.521,
+   "scale": 2.26,
+   "high_when": [
+    [
+     "enemy below me",
+     0.8
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.79
+    ],
+    [
+     "in the air with the axe",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "on the ground",
+     0.23
+    ],
+    [
+     "enemy above me",
+     0.23
+    ]
+   ],
+   "reads": [
+    "ranged lead 78",
+    "last forward key",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "jump on",
+    "forward W",
+    "lock aim on"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 1,
+   "id": 36,
+   "name": "Quiet: Enemy Shield Up And Facing",
+   "importance_rank": 17,
+   "runup": 0.608,
+   "importance": 0.0171,
+   "fires": 0.937,
+   "scale": 2.182,
+   "high_when": [
+    [
+     "enemy in hurt window",
+     0.86
+    ],
+    [
+     "enemy in sight",
+     0.75
+    ],
+    [
+     "just landed a hit",
+     0.74
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy shield up and facing",
+     0.03
+    ],
+    [
+     "enemy shield up",
+     0.05
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "enemy holds crossbow"
+   ],
+   "pushes": [
+    "use on",
+    "forward S",
+    "attack none"
+   ],
+   "cluster": "Enemy shield"
+  },
+  {
+   "layer": 1,
+   "id": 228,
+   "name": "Own Shield Up",
+   "importance_rank": 3,
+   "runup": 0.646,
+   "importance": 0.0273,
+   "fires": 0.953,
+   "scale": 3.119,
+   "high_when": [
+    [
+     "own shield up",
+     0.95
+    ],
+    [
+     "picks use",
+     0.84
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.84
+    ]
+   ],
+   "low_when": [
+    [
+     "own shield disabled",
+     0.16
+    ],
+    [
+     "enemy in hurt window",
+     0.17
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "own shield up",
+    "hit combo"
+   ],
+   "pushes": [
+    "jump on",
+    "use on",
+    "attack click"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 1,
+   "id": 38,
+   "name": "Sprinting",
+   "importance_rank": 22,
+   "runup": 0.426,
+   "importance": 0.0157,
+   "fires": 0.803,
+   "scale": 2.057,
+   "high_when": [
+    [
+     "sprinting",
+     0.81
+    ],
+    [
+     "own shield disabled",
+     0.8
+    ],
+    [
+     "picks sprint",
+     0.79
+    ]
+   ],
+   "low_when": [
+    [
+     "own shield up",
+     0.2
+    ],
+    [
+     "picks use",
+     0.2
+    ]
+   ],
+   "reads": [
+    "own shield rising",
+    "enemy holds axe",
+    "ranged lead 75"
+   ],
+   "pushes": [
+    "attack none",
+    "sprint on",
+    "use off"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 1,
+   "id": 219,
+   "name": "Quiet: Own Shield Disabled",
+   "importance_rank": 26,
+   "runup": 0.595,
+   "importance": 0.015,
+   "fires": 0.999,
+   "scale": 3.383,
+   "high_when": [
+    [
+     "own shield up",
+     0.92
+    ],
+    [
+     "picks use",
+     0.88
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "own shield disabled",
+     0.1
+    ],
+    [
+     "picks sprint",
+     0.2
+    ]
+   ],
+   "reads": [
+    "own shield rising",
+    "last use key",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "jump on",
+    "forward W",
+    "attack double"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 1,
+   "id": 4,
+   "name": "Quiet: Enemy Using Ranged",
+   "importance_rank": 6,
+   "runup": 0.614,
+   "importance": 0.0247,
+   "fires": 0.718,
+   "scale": 1.741,
+   "high_when": [
+    [
+     "own shield up",
+     0.92
+    ],
+    [
+     "holding axe",
+     0.83
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.82
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds crossbow",
+     0.12
+    ],
+    [
+     "enemy using ranged",
+     0.13
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "enemy holds sword",
+    "last forward key"
+   ],
+   "pushes": [
+    "use on",
+    "weapon axe",
+    "attack click"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 1,
+   "id": 25,
+   "name": "Quiet: Picks Lock Aim",
+   "importance_rank": 9,
+   "runup": 0.59,
+   "importance": 0.0213,
+   "fires": 0.597,
+   "scale": 2.387,
+   "high_when": [
+    [
+     "own shield up",
+     0.77
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.76
+    ],
+    [
+     "enemy below me",
+     0.76
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds crossbow",
+     0.19
+    ],
+    [
+     "enemy using ranged",
+     0.19
+    ]
+   ],
+   "reads": [
+    "enemy sprinting",
+    "yaw error fine",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "use on",
+    "weapon axe",
+    "weapon keep"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 1,
+   "id": 123,
+   "name": "Crosshair on Enemy",
+   "importance_rank": 11,
+   "runup": 0.572,
+   "importance": 0.02,
+   "fires": 0.743,
+   "scale": 1.94,
+   "high_when": [
+    [
+     "crosshair on enemy",
+     0.92
+    ],
+    [
+     "holding axe",
+     0.9
+    ],
+    [
+     "about to break a shield",
+     0.87
+    ]
+   ],
+   "low_when": [
+    [
+     "holding crossbow",
+     0.1
+    ],
+    [
+     "picks lock aim",
+     0.1
+    ]
+   ],
+   "reads": [
+    "distance to enemy body",
+    "enemy sprinting",
+    "own hurt timer"
+   ],
+   "pushes": [
+    "use on",
+    "weapon keep",
+    "attack double"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 1,
+   "id": 26,
+   "name": "Quiet: Enemy Past 6 Blocks",
+   "importance_rank": 18,
+   "runup": 0.567,
+   "importance": 0.0168,
+   "fires": 0.728,
+   "scale": 1.855,
+   "high_when": [
+    [
+     "holding axe",
+     0.82
+    ],
+    [
+     "picks swing",
+     0.73
+    ],
+    [
+     "own shield up",
+     0.72
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy past 6 blocks",
+     0.14
+    ],
+    [
+     "picks crossbow",
+     0.15
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "ranged lead 75",
+    "yaw error fine"
+   ],
+   "pushes": [
+    "use on",
+    "weapon axe",
+    "weapon keep"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 1,
+   "id": 194,
+   "name": "Enemy Holds Crossbow",
+   "importance_rank": 28,
+   "runup": 0.345,
+   "importance": 0.0149,
+   "fires": 0.537,
+   "scale": 1.937,
+   "high_when": [
+    [
+     "enemy holds crossbow",
+     0.89
+    ],
+    [
+     "enemy past 6 blocks",
+     0.88
+    ],
+    [
+     "enemy using ranged",
+     0.85
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy within 3 blocks",
+     0.16
+    ],
+    [
+     "crosshair on enemy",
+     0.19
+    ]
+   ],
+   "reads": [
+    "distance to enemy body",
+    "own shield rising",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "weapon crossbow",
+    "use off",
+    "sneak off"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 1,
+   "id": 204,
+   "name": "Quiet: About to Break A Shield",
+   "importance_rank": 13,
+   "runup": 0.648,
+   "importance": 0.0187,
+   "fires": 0.989,
+   "scale": 2.652,
+   "high_when": [
+    [
+     "enemy in sight",
+     0.89
+    ],
+    [
+     "attack charging",
+     0.89
+    ],
+    [
+     "enemy facing me",
+     0.8
+    ]
+   ],
+   "low_when": [
+    [
+     "about to break a shield",
+     0.1
+    ],
+    [
+     "attack ready",
+     0.11
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "attack ready",
+    "enemy holds axe"
+   ],
+   "pushes": [
+    "use on",
+    "attack none",
+    "weapon keep"
+   ],
+   "cluster": "Axe and swing"
+  },
+  {
+   "layer": 1,
+   "id": 248,
+   "name": "Enemy in Hurt Window",
+   "importance_rank": 7,
+   "runup": 0.578,
+   "importance": 0.0228,
+   "fires": 0.54,
+   "scale": 2.58,
+   "high_when": [
+    [
+     "enemy in hurt window",
+     0.96
+    ],
+    [
+     "enemy above me",
+     0.9
+    ],
+    [
+     "just landed a hit",
+     0.85
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy below me",
+     0.21
+    ],
+    [
+     "enemy using ranged",
+     0.23
+    ]
+   ],
+   "reads": [
+    "pitch error fine",
+    "enemy hurt timer",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "use on",
+    "forward S",
+    "jump off"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 1,
+   "id": 191,
+   "name": "Enemy Holds Axe",
+   "importance_rank": 16,
+   "runup": 0.535,
+   "importance": 0.0172,
+   "fires": 0.385,
+   "scale": 1.598,
+   "high_when": [
+    [
+     "enemy holds axe",
+     0.77
+    ],
+    [
+     "just got hit",
+     0.74
+    ],
+    [
+     "enemy shield disabled",
+     0.69
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy swing ready",
+     0.29
+    ],
+    [
+     "enemy using ranged",
+     0.31
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "enemy holds sword",
+    "enemy sprinting"
+   ],
+   "pushes": [
+    "use off",
+    "forward W",
+    "attack none"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 1,
+   "id": 109,
+   "name": "Enemy to My Left",
+   "importance_rank": 2,
+   "runup": 0.517,
+   "importance": 0.0329,
+   "fires": 0.535,
+   "scale": 2.09,
+   "high_when": [
+    [
+     "enemy to my left",
+     0.84
+    ],
+    [
+     "about to break a shield",
+     0.77
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.73
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy to my right",
+     0.18
+    ],
+    [
+     "enemy in hurt window",
+     0.26
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "ranged lead 77",
+    "ranged lead 75"
+   ],
+   "pushes": [
+    "use off",
+    "attack none",
+    "weapon keep"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 169,
+   "name": "Quiet: Enemy Holds Crossbow",
+   "importance_rank": 4,
+   "runup": 0.536,
+   "importance": 0.0263,
+   "fires": 0.809,
+   "scale": 2.469,
+   "high_when": [
+    [
+     "holding axe",
+     0.77
+    ],
+    [
+     "own shield disabled",
+     0.7
+    ],
+    [
+     "enemy to my left",
+     0.7
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds crossbow",
+     0.23
+    ],
+    [
+     "enemy behind me",
+     0.24
+    ]
+   ],
+   "reads": [
+    "ranged lead 78",
+    "own shield disabled",
+    "pitch error fine"
+   ],
+   "pushes": [
+    "attack none",
+    "use on",
+    "weapon axe"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 140,
+   "name": "Quiet: Enemy to My Left",
+   "importance_rank": 5,
+   "runup": 0.508,
+   "importance": 0.026,
+   "fires": 0.803,
+   "scale": 2.725,
+   "high_when": [
+    [
+     "enemy to my right",
+     0.78
+    ],
+    [
+     "enemy behind me",
+     0.73
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.72
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy to my left",
+     0.16
+    ],
+    [
+     "enemy using ranged",
+     0.18
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "ranged lead 77",
+    "ranged lead 75"
+   ],
+   "pushes": [
+    "jump off",
+    "weapon axe",
+    "attack none"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 97,
+   "name": "Enemy Below Me",
+   "importance_rank": 10,
+   "runup": 0.494,
+   "importance": 0.02,
+   "fires": 0.579,
+   "scale": 2.24,
+   "high_when": [
+    [
+     "enemy below me",
+     0.75
+    ],
+    [
+     "sprinting",
+     0.75
+    ],
+    [
+     "rising",
+     0.72
+    ]
+   ],
+   "low_when": [
+    [
+     "about to land a crit",
+     0.27
+    ],
+    [
+     "crosshair on enemy",
+     0.27
+    ]
+   ],
+   "reads": [
+    "enemy sprinting",
+    "enemy holds sword",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "use on",
+    "weapon keep",
+    "weapon axe"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 3,
+   "name": "Enemy Above Me",
+   "importance_rank": 15,
+   "runup": 0.521,
+   "importance": 0.0174,
+   "fires": 0.838,
+   "scale": 1.931,
+   "high_when": [
+    [
+     "enemy above me",
+     0.91
+    ],
+    [
+     "enemy in hurt window",
+     0.89
+    ],
+    [
+     "just landed a hit",
+     0.83
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy below me",
+     0.18
+    ],
+    [
+     "in the air with the axe",
+     0.19
+    ]
+   ],
+   "reads": [
+    "ranged lead 76",
+    "own shield rising",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "use on",
+    "weapon keep",
+    "forward S"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 84,
+   "name": "Quiet: Enemy Above Me",
+   "importance_rank": 20,
+   "runup": 0.537,
+   "importance": 0.0161,
+   "fires": 0.472,
+   "scale": 2.041,
+   "high_when": [
+    [
+     "enemy below me",
+     0.78
+    ],
+    [
+     "in the air with the axe",
+     0.69
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.68
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.23
+    ],
+    [
+     "enemy above me",
+     0.26
+    ]
+   ],
+   "reads": [
+    "pitch error fine",
+    "ranged lead 78",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "attack none",
+    "use on",
+    "weapon keep"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 95,
+   "name": "Enemy Behind Me",
+   "importance_rank": 21,
+   "runup": 0.497,
+   "importance": 0.0158,
+   "fires": 0.842,
+   "scale": 2.9,
+   "high_when": [
+    [
+     "enemy in hurt window",
+     0.93
+    ],
+    [
+     "enemy behind me",
+     0.9
+    ],
+    [
+     "enemy to my right",
+     0.88
+    ]
+   ],
+   "low_when": [
+    [
+     "crosshair on enemy",
+     0.3
+    ],
+    [
+     "attack ready",
+     0.31
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "use off",
+    "weapon crossbow",
+    "lock aim off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 162,
+   "name": "Quiet: Crosshair on Enemy",
+   "importance_rank": 25,
+   "runup": 0.471,
+   "importance": 0.0151,
+   "fires": 0.869,
+   "scale": 2.488,
+   "high_when": [
+    [
+     "enemy in hurt window",
+     0.84
+    ],
+    [
+     "enemy past 6 blocks",
+     0.79
+    ],
+    [
+     "enemy behind me",
+     0.76
+    ]
+   ],
+   "low_when": [
+    [
+     "crosshair on enemy",
+     0.1
+    ],
+    [
+     "about to break a shield",
+     0.19
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "own shield up"
+   ],
+   "pushes": [
+    "weapon crossbow",
+    "use off",
+    "jump on"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 172,
+   "name": "Quiet: Enemy Holds Axe",
+   "importance_rank": 29,
+   "runup": 0.578,
+   "importance": 0.0147,
+   "fires": 0.948,
+   "scale": 2.599,
+   "high_when": [
+    [
+     "enemy to my left",
+     0.84
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.78
+    ],
+    [
+     "picks use",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds axe",
+     0.19
+    ],
+    [
+     "own shield disabled",
+     0.2
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "ranged lead 76",
+    "enemy using ranged"
+   ],
+   "pushes": [
+    "weapon crossbow",
+    "jump on",
+    "lock aim off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 90,
+   "name": "Quiet: Enemy Behind Me",
+   "importance_rank": 30,
+   "runup": 0.535,
+   "importance": 0.0146,
+   "fires": 0.753,
+   "scale": 2.383,
+   "high_when": [
+    [
+     "in the air with the axe",
+     0.82
+    ],
+    [
+     "enemy to my left",
+     0.79
+    ],
+    [
+     "enemy below me",
+     0.79
+    ]
+   ],
+   "low_when": [
+    [
+     "on the ground",
+     0.17
+    ],
+    [
+     "enemy to my right",
+     0.19
+    ]
+   ],
+   "reads": [
+    "last forward key",
+    "enemy holds axe",
+    "enemy sprinting"
+   ],
+   "pushes": [
+    "use off",
+    "attack click",
+    "sneak off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 101,
+   "name": "Enemy to My Right",
+   "importance_rank": 31,
+   "runup": 0.531,
+   "importance": 0.0146,
+   "fires": 0.818,
+   "scale": 2.295,
+   "high_when": [
+    [
+     "enemy above me",
+     0.81
+    ],
+    [
+     "enemy to my right",
+     0.79
+    ],
+    [
+     "enemy in hurt window",
+     0.75
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy below me",
+     0.27
+    ],
+    [
+     "enemy to my left",
+     0.28
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "ranged lead 76",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "use on",
+    "attack double",
+    "jump on"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 1,
+   "id": 151,
+   "name": "Quiet: Crossbow Loaded",
+   "importance_rank": 32,
+   "runup": 0.575,
+   "importance": 0.0144,
+   "fires": 0.954,
+   "scale": 2.484,
+   "high_when": [
+    [
+     "picks use",
+     0.77
+    ],
+    [
+     "chooses to jump near the enemy",
+     0.73
+    ],
+    [
+     "enemy in hurt window",
+     0.7
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds axe",
+     0.16
+    ],
+    [
+     "crossbow loaded",
+     0.21
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "hit combo"
+   ],
+   "pushes": [
+    "use on",
+    "lock aim off",
+    "jump on"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 191,
+   "name": "Holding Axe",
+   "importance_rank": 4,
+   "runup": 0.659,
+   "importance": 0.0485,
+   "fires": 0.861,
+   "scale": 6.105,
+   "high_when": [
+    [
+     "holding axe",
+     0.95
+    ],
+    [
+     "enemy facing me",
+     0.84
+    ],
+    [
+     "enemy within 3 blocks",
+     0.83
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy past 6 blocks",
+     0.05
+    ],
+    [
+     "picks lock aim",
+     0.05
+    ]
+   ],
+   "reads": [
+    "attack ready",
+    "ranged lead 75",
+    "own shield disabled"
+   ],
+   "pushes": [
+    "use on",
+    "weapon axe",
+    "weapon keep"
+   ],
+   "cluster": "Sprint jump crit range"
+  },
+  {
+   "layer": 2,
+   "id": 234,
+   "name": "Enemy Within 3 Blocks",
+   "importance_rank": 27,
+   "runup": 0.651,
+   "importance": 0.023,
+   "fires": 0.828,
+   "scale": 5.184,
+   "high_when": [
+    [
+     "holding axe",
+     0.89
+    ],
+    [
+     "enemy within 3 blocks",
+     0.82
+    ],
+    [
+     "enemy to my right",
+     0.82
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds crossbow",
+     0.08
+    ],
+    [
+     "enemy past 6 blocks",
+     0.08
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "pitch error fine",
+    "ranged lead 75"
+   ],
+   "pushes": [
+    "use on",
+    "weapon keep",
+    "weapon axe"
+   ],
+   "cluster": "Sprint jump crit range"
+  },
+  {
+   "layer": 2,
+   "id": 207,
+   "name": "Falling",
+   "importance_rank": 6,
+   "runup": 0.554,
+   "importance": 0.0413,
+   "fires": 0.267,
+   "scale": 4.723,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.83
+    ],
+    [
+     "falling",
+     0.7
+    ],
+    [
+     "crosshair on enemy",
+     0.68
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.22
+    ],
+    [
+     "just landed a hit",
+     0.32
+    ]
+   ],
+   "reads": [
+    "pitch error fine",
+    "distance to enemy body",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "sneak on",
+    "attack double",
+    "sprint off"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 193,
+   "name": "About to Land A Crit",
+   "importance_rank": 8,
+   "runup": 0.53,
+   "importance": 0.037,
+   "fires": 0.32,
+   "scale": 5.859,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.75
+    ],
+    [
+     "crosshair on enemy",
+     0.72
+    ],
+    [
+     "about to land a crit",
+     0.71
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.22
+    ],
+    [
+     "just landed a hit",
+     0.33
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "crosshair on enemy in reach"
+   ],
+   "pushes": [
+    "sneak on",
+    "jump off",
+    "forward W"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 140,
+   "name": "Quiet: Holding Crossbow",
+   "importance_rank": 12,
+   "runup": 0.568,
+   "importance": 0.0346,
+   "fires": 0.485,
+   "scale": 4.163,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.9
+    ],
+    [
+     "own shield up",
+     0.79
+    ],
+    [
+     "about to land a crit",
+     0.77
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.14
+    ],
+    [
+     "just landed a hit",
+     0.24
+    ]
+   ],
+   "reads": [
+    "last forward key",
+    "enemy hurt timer",
+    "look pitch"
+   ],
+   "pushes": [
+    "attack click",
+    "sneak off",
+    "use on"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 12,
+   "name": "Just Got Hit",
+   "importance_rank": 14,
+   "runup": 0.483,
+   "importance": 0.0325,
+   "fires": 0.553,
+   "scale": 3.914,
+   "high_when": [
+    [
+     "in the air with the axe",
+     0.82
+    ],
+    [
+     "just got hit",
+     0.8
+    ],
+    [
+     "just hurt",
+     0.79
+    ]
+   ],
+   "low_when": [
+    [
+     "on the ground",
+     0.2
+    ],
+    [
+     "enemy above me",
+     0.27
+    ]
+   ],
+   "reads": [
+    "crossbow loaded",
+    "on the ground",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "use off",
+    "lock aim off",
+    "weapon axe"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 213,
+   "name": "Quiet: in the Air with the Axe",
+   "importance_rank": 29,
+   "runup": 0.467,
+   "importance": 0.0225,
+   "fires": 0.29,
+   "scale": 2.93,
+   "high_when": [
+    [
+     "about to break a shield",
+     0.78
+    ],
+    [
+     "enemy to my right",
+     0.75
+    ],
+    [
+     "on the ground",
+     0.7
+    ]
+   ],
+   "low_when": [
+    [
+     "in the air with the axe",
+     0.29
+    ],
+    [
+     "enemy below me",
+     0.34
+    ]
+   ],
+   "reads": [
+    "ranged lead 75",
+    "yaw error fine",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "strafe A",
+    "sprint off",
+    "sneak on"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 88,
+   "name": "Crit Window 2.88",
+   "importance_rank": 31,
+   "runup": 0.54,
+   "importance": 0.0217,
+   "fires": 0.518,
+   "scale": 4.784,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.84
+    ],
+    [
+     "holding axe",
+     0.78
+    ],
+    [
+     "about to land a crit",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.16
+    ],
+    [
+     "holding crossbow",
+     0.22
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "ranged lead 75",
+    "own shield disabled"
+   ],
+   "pushes": [
+    "use on",
+    "jump on",
+    "lock aim on"
+   ],
+   "cluster": "Crits and jumps"
+  },
+  {
+   "layer": 2,
+   "id": 7,
+   "name": "Chooses to Swing in Reach",
+   "importance_rank": 30,
+   "runup": 0.491,
+   "importance": 0.0221,
+   "fires": 0.136,
+   "scale": 4.57,
+   "high_when": [
+    [
+     "about to break a shield",
+     0.92
+    ],
+    [
+     "about to land a crit",
+     0.82
+    ],
+    [
+     "crosshair on enemy",
+     0.79
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.35
+    ],
+    [
+     "attack charging",
+     0.38
+    ]
+   ],
+   "reads": [
+    "crosshair on enemy in reach",
+    "attack ready",
+    "crosshair on enemy far"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "attack double"
+   ],
+   "cluster": "Enemy shield"
+  },
+  {
+   "layer": 2,
+   "id": 183,
+   "name": "Enemy Shield Up",
+   "importance_rank": 32,
+   "runup": 0.495,
+   "importance": 0.0208,
+   "fires": 0.261,
+   "scale": 5.352,
+   "high_when": [
+    [
+     "about to break a shield",
+     0.9
+    ],
+    [
+     "about to land a crit",
+     0.83
+    ],
+    [
+     "crosshair on enemy",
+     0.81
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.27
+    ],
+    [
+     "just landed a hit",
+     0.34
+    ]
+   ],
+   "reads": [
+    "crosshair on enemy in reach",
+    "enemy holds sword",
+    "enemy holds axe"
+   ],
+   "pushes": [
+    "attack double",
+    "use off",
+    "sneak on"
+   ],
+   "cluster": "Enemy shield"
+  },
+  {
+   "layer": 2,
+   "id": 17,
+   "name": "Quiet: Own Shield Up",
+   "importance_rank": 2,
+   "runup": 0.459,
+   "importance": 0.0668,
+   "fires": 0.728,
+   "scale": 5.191,
+   "high_when": [
+    [
+     "own shield disabled",
+     0.96
+    ],
+    [
+     "enemy holds axe",
+     0.85
+    ],
+    [
+     "holds the swing while charging",
+     0.82
+    ]
+   ],
+   "low_when": [
+    [
+     "own shield up",
+     0.09
+    ],
+    [
+     "picks use",
+     0.14
+    ]
+   ],
+   "reads": [
+    "own shield disabled",
+    "enemy holds sword",
+    "own shield up"
+   ],
+   "pushes": [
+    "attack none",
+    "weapon keep",
+    "weapon sword"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 2,
+   "id": 163,
+   "name": "Quiet: Picks Use",
+   "importance_rank": 7,
+   "runup": 0.377,
+   "importance": 0.0403,
+   "fires": 0.5,
+   "scale": 3.548,
+   "high_when": [
+    [
+     "own shield disabled",
+     0.8
+    ],
+    [
+     "sprinting",
+     0.76
+    ],
+    [
+     "picks sprint",
+     0.76
+    ]
+   ],
+   "low_when": [
+    [
+     "picks use",
+     0.19
+    ],
+    [
+     "enemy facing me",
+     0.2
+    ]
+   ],
+   "reads": [
+    "last use key",
+    "enemy holds sword",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "sneak off",
+    "attack none",
+    "weapon keep"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 2,
+   "id": 27,
+   "name": "Enemy Shield Rising",
+   "importance_rank": 24,
+   "runup": 0.467,
+   "importance": 0.0242,
+   "fires": 0.222,
+   "scale": 4.359,
+   "high_when": [
+    [
+     "about to land a crit",
+     0.68
+    ],
+    [
+     "crosshair on enemy",
+     0.67
+    ],
+    [
+     "own shield disabled",
+     0.66
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.31
+    ],
+    [
+     "picks use",
+     0.36
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "enemy holds sword",
+    "last use key"
+   ],
+   "pushes": [
+    "jump off",
+    "strafe none",
+    "sprint off"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 2,
+   "id": 64,
+   "name": "Quiet: Picks Swing",
+   "importance_rank": 26,
+   "runup": 0.401,
+   "importance": 0.0233,
+   "fires": 0.801,
+   "scale": 4.488,
+   "high_when": [
+    [
+     "own shield disabled",
+     0.85
+    ],
+    [
+     "enemy holds crossbow",
+     0.81
+    ],
+    [
+     "picks lock aim",
+     0.76
+    ]
+   ],
+   "low_when": [
+    [
+     "own shield up",
+     0.09
+    ],
+    [
+     "picks use",
+     0.18
+    ]
+   ],
+   "reads": [
+    "own shield rising",
+    "ranged lead 75",
+    "own shield up"
+   ],
+   "pushes": [
+    "attack none",
+    "use off",
+    "lock aim off"
+   ],
+   "cluster": "My shield"
+  },
+  {
+   "layer": 2,
+   "id": 122,
+   "name": "Enemy Past 6 Blocks",
+   "importance_rank": 9,
+   "runup": 0.513,
+   "importance": 0.0358,
+   "fires": 0.787,
+   "scale": 4.535,
+   "high_when": [
+    [
+     "enemy past 6 blocks",
+     0.77
+    ],
+    [
+     "round start",
+     0.77
+    ],
+    [
+     "picks crossbow",
+     0.77
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy holds axe",
+     0.06
+    ],
+    [
+     "own shield disabled",
+     0.22
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "distance to enemy body",
+    "enemy holds crossbow"
+   ],
+   "pushes": [
+    "weapon crossbow",
+    "jump on",
+    "sprint on"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 2,
+   "id": 14,
+   "name": "Just Hurt",
+   "importance_rank": 13,
+   "runup": 0.557,
+   "importance": 0.0327,
+   "fires": 0.81,
+   "scale": 4.254,
+   "high_when": [
+    [
+     "just hurt",
+     0.88
+    ],
+    [
+     "about to land a crit",
+     0.85
+    ],
+    [
+     "holding axe",
+     0.81
+    ]
+   ],
+   "low_when": [
+    [
+     "loading crossbow",
+     0.1
+    ],
+    [
+     "enemy shield up and facing",
+     0.13
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "yaw error fine",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "jump off",
+    "use off",
+    "sprint off"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 2,
+   "id": 149,
+   "name": "Quiet: Chooses to Jump Near the Enemy",
+   "importance_rank": 22,
+   "runup": 0.517,
+   "importance": 0.0257,
+   "fires": 0.812,
+   "scale": 5.043,
+   "high_when": [
+    [
+     "holding axe",
+     0.93
+    ],
+    [
+     "own shield disabled",
+     0.91
+    ],
+    [
+     "enemy holds axe",
+     0.9
+    ]
+   ],
+   "low_when": [
+    [
+     "holding crossbow",
+     0.06
+    ],
+    [
+     "picks lock aim",
+     0.06
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "own shield disabled",
+    "enemy holds axe"
+   ],
+   "pushes": [
+    "jump off",
+    "attack none",
+    "weapon axe"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 2,
+   "id": 61,
+   "name": "Crossbow Loaded",
+   "importance_rank": 23,
+   "runup": 0.482,
+   "importance": 0.0246,
+   "fires": 0.102,
+   "scale": 3.889,
+   "high_when": [
+    [
+     "enemy holds crossbow",
+     0.66
+    ],
+    [
+     "about to land a crit",
+     0.66
+    ],
+    [
+     "crossbow loaded",
+     0.63
+    ]
+   ],
+   "low_when": [
+    [
+     "attack charging",
+     0.4
+    ],
+    [
+     "holding axe",
+     0.4
+    ]
+   ],
+   "reads": [
+    "crosshair on enemy in reach",
+    "attack ready",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "strafe D"
+   ],
+   "cluster": "Crossbow"
+  },
+  {
+   "layer": 2,
+   "id": 165,
+   "name": "Quiet: Round Start",
+   "importance_rank": 20,
+   "runup": 0.574,
+   "importance": 0.0275,
+   "fires": 0.856,
+   "scale": 5.953,
+   "high_when": [
+    [
+     "holding axe",
+     0.84
+    ],
+    [
+     "crosshair on enemy",
+     0.76
+    ],
+    [
+     "picks swing",
+     0.69
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.12
+    ],
+    [
+     "enemy past 6 blocks",
+     0.14
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "enemy holds axe",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "weapon axe",
+    "jump on",
+    "use on"
+   ],
+   "cluster": "Axe and swing"
+  },
+  {
+   "layer": 2,
+   "id": 87,
+   "name": "Quiet: Enemy in the Air",
+   "importance_rank": 5,
+   "runup": 0.428,
+   "importance": 0.0423,
+   "fires": 0.894,
+   "scale": 5.358,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.74
+    ],
+    [
+     "attack ready",
+     0.73
+    ],
+    [
+     "sprinting",
+     0.72
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.07
+    ],
+    [
+     "just landed a hit",
+     0.16
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "time since enemy swing"
+   ],
+   "pushes": [
+    "attack none",
+    "lock aim off",
+    "forward none"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 2,
+   "id": 222,
+   "name": "Just Landed A Hit",
+   "importance_rank": 16,
+   "runup": 0.566,
+   "importance": 0.0315,
+   "fires": 0.322,
+   "scale": 3.466,
+   "high_when": [
+    [
+     "enemy in hurt window",
+     0.94
+    ],
+    [
+     "enemy above me",
+     0.82
+    ],
+    [
+     "just landed a hit",
+     0.78
+    ]
+   ],
+   "low_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.32
+    ],
+    [
+     "enemy below me",
+     0.32
+    ]
+   ],
+   "reads": [
+    "enemy hurt timer",
+    "ranged lead 76",
+    "enemy forward speed"
+   ],
+   "pushes": [
+    "jump off",
+    "sneak on",
+    "attack click"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 2,
+   "id": 196,
+   "name": "Quiet: Picks Crossbow",
+   "importance_rank": 17,
+   "runup": 0.5,
+   "importance": 0.0303,
+   "fires": 0.343,
+   "scale": 4.965,
+   "high_when": [
+    [
+     "crosshair on enemy",
+     0.73
+    ],
+    [
+     "about to land a crit",
+     0.72
+    ],
+    [
+     "holding axe",
+     0.69
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.24
+    ],
+    [
+     "holding crossbow",
+     0.31
+    ]
+   ],
+   "reads": [
+    "ranged lead 76",
+    "pitch error fine",
+    "enemy holds axe"
+   ],
+   "pushes": [
+    "sneak off",
+    "strafe none",
+    "forward S"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 2,
+   "id": 103,
+   "name": "Quiet: Enemy in Hurt Window 2.103",
+   "importance_rank": 19,
+   "runup": 0.53,
+   "importance": 0.0277,
+   "fires": 0.601,
+   "scale": 5.066,
+   "high_when": [
+    [
+     "holding axe",
+     0.83
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.75
+    ],
+    [
+     "crosshair on enemy",
+     0.75
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.08
+    ],
+    [
+     "holding crossbow",
+     0.17
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy forward speed",
+    "enemy hurt timer"
+   ],
+   "pushes": [
+    "lock aim off",
+    "weapon keep",
+    "attack click"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 2,
+   "id": 151,
+   "name": "Own Health Low",
+   "importance_rank": 21,
+   "runup": 0.474,
+   "importance": 0.0266,
+   "fires": 0.432,
+   "scale": 5.645,
+   "high_when": [
+    [
+     "enemy holds axe",
+     0.76
+    ],
+    [
+     "own shield disabled",
+     0.73
+    ],
+    [
+     "own health low",
+     0.67
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.21
+    ],
+    [
+     "loading crossbow",
+     0.27
+    ]
+   ],
+   "reads": [
+    "enemy holds sword",
+    "enemy holds axe",
+    "yaw error fine"
+   ],
+   "pushes": [
+    "use off",
+    "strafe D",
+    "weapon crossbow"
+   ],
+   "cluster": "Hit timing"
+  },
+  {
+   "layer": 2,
+   "id": 172,
+   "name": "About to Break A Shield",
+   "importance_rank": 1,
+   "runup": 0.464,
+   "importance": 0.0709,
+   "fires": 0.298,
+   "scale": 7.191,
+   "high_when": [
+    [
+     "crosshair on enemy",
+     0.88
+    ],
+    [
+     "about to break a shield",
+     0.87
+    ],
+    [
+     "about to land a crit",
+     0.81
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.26
+    ],
+    [
+     "enemy to my left",
+     0.34
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "crosshair on enemy in reach",
+    "yaw error fine"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "attack double"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 82,
+   "name": "Quiet: Just Landed A Hit",
+   "importance_rank": 3,
+   "runup": 0.473,
+   "importance": 0.064,
+   "fires": 0.757,
+   "scale": 8.094,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.8
+    ],
+    [
+     "attack ready",
+     0.72
+    ],
+    [
+     "crosshair on enemy",
+     0.71
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy to my right",
+     0.14
+    ],
+    [
+     "enemy in hurt window",
+     0.17
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "enemy holds sword",
+    "yaw error fine"
+   ],
+   "pushes": [
+    "sneak on",
+    "forward S",
+    "weapon keep"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 131,
+   "name": "Quiet: Loading Crossbow",
+   "importance_rank": 10,
+   "runup": 0.474,
+   "importance": 0.0356,
+   "fires": 0.569,
+   "scale": 6.296,
+   "high_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.7
+    ],
+    [
+     "crosshair on enemy",
+     0.66
+    ],
+    [
+     "about to break a shield",
+     0.64
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.18
+    ],
+    [
+     "enemy to my left",
+     0.24
+    ]
+   ],
+   "reads": [
+    "yaw error fine",
+    "ranged lead 75",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "forward W",
+    "weapon keep",
+    "lock aim off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 67,
+   "name": "Quiet: Enemy Facing Me",
+   "importance_rank": 11,
+   "runup": 0.457,
+   "importance": 0.0355,
+   "fires": 0.488,
+   "scale": 3.473,
+   "high_when": [
+    [
+     "enemy below me",
+     0.73
+    ],
+    [
+     "sprinting",
+     0.71
+    ],
+    [
+     "in the air with the axe",
+     0.71
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy facing me",
+     0.21
+    ],
+    [
+     "enemy above me",
+     0.26
+    ]
+   ],
+   "reads": [
+    "ranged lead 76",
+    "enemy holds axe",
+    "last strafe key"
+   ],
+   "pushes": [
+    "jump off",
+    "strafe A",
+    "use off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 134,
+   "name": "Enemy Using Ranged",
+   "importance_rank": 15,
+   "runup": 0.524,
+   "importance": 0.0322,
+   "fires": 0.343,
+   "scale": 3.727,
+   "high_when": [
+    [
+     "enemy using ranged",
+     0.86
+    ],
+    [
+     "enemy behind me",
+     0.85
+    ],
+    [
+     "enemy to my right",
+     0.84
+    ]
+   ],
+   "low_when": [
+    [
+     "crit window (falling, charged, axe)",
+     0.32
+    ],
+    [
+     "in the air with the axe",
+     0.33
+    ]
+   ],
+   "reads": [
+    "ranged lead 75",
+    "ranged lead 77",
+    "ranged lead 76"
+   ],
+   "pushes": [
+    "strafe D",
+    "use on",
+    "weapon crossbow"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 71,
+   "name": "Enemy Shield Up And Facing",
+   "importance_rank": 18,
+   "runup": 0.476,
+   "importance": 0.0284,
+   "fires": 0.196,
+   "scale": 6.527,
+   "high_when": [
+    [
+     "about to break a shield",
+     0.9
+    ],
+    [
+     "crosshair on enemy",
+     0.82
+    ],
+    [
+     "about to land a crit",
+     0.73
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.31
+    ],
+    [
+     "enemy to my right",
+     0.38
+    ]
+   ],
+   "reads": [
+    "crosshair on enemy in reach",
+    "enemy holds axe",
+    "crosshair on enemy far"
+   ],
+   "pushes": [
+    "use off",
+    "jump off",
+    "attack double"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 164,
+   "name": "Quiet: Enemy in Hurt Window 2.164",
+   "importance_rank": 25,
+   "runup": 0.534,
+   "importance": 0.0239,
+   "fires": 0.43,
+   "scale": 4.605,
+   "high_when": [
+    [
+     "about to land a crit",
+     0.75
+    ],
+    [
+     "crosshair on enemy",
+     0.75
+    ],
+    [
+     "holding axe",
+     0.74
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy in hurt window",
+     0.24
+    ],
+    [
+     "enemy to my right",
+     0.26
+    ]
+   ],
+   "reads": [
+    "enemy holds axe",
+    "enemy holds sword",
+    "ranged lead 77"
+   ],
+   "pushes": [
+    "forward W",
+    "use off",
+    "lock aim off"
+   ],
+   "cluster": "Tracking the enemy"
+  },
+  {
+   "layer": 2,
+   "id": 185,
+   "name": "Falling with the Axe",
+   "importance_rank": 28,
+   "runup": 0.55,
+   "importance": 0.0226,
+   "fires": 0.414,
+   "scale": 3.63,
+   "high_when": [
+    [
+     "enemy to my left",
+     0.77
+    ],
+    [
+     "about to land a crit",
+     0.72
+    ],
+    [
+     "crit window (falling, charged, axe)",
+     0.69
+    ]
+   ],
+   "low_when": [
+    [
+     "enemy to my right",
+     0.28
+    ],
+    [
+     "enemy in hurt window",
+     0.31
+    ]
+   ],
+   "reads": [
+    "ranged lead 75",
+    "yaw error fine",
+    "enemy holds sword"
+   ],
+   "pushes": [
+    "lock aim on",
+    "weapon axe",
+    "sneak on"
+   ],
+   "cluster": "Tracking the enemy"
+  }
+ ]
+}

@@ -1,5 +1,5 @@
-// A 1v1 in its own world. One command starts a private Paper server, waits for the player, plays a best of 3 with the same
-// fight code as the walkthrough's !1v1, and stops that server again.
+// A 1v1 in its own world. One command starts a private server that stays up. Each time the player types go it plays a best
+// of 3 with the same fight code as the walkthrough's !1v1, then waits for the next go.
 //
 //   DEMO_PLAYER=<name> DEMO_FIGHTER_RUN=<folder> node bridge/danger_sensing_agents/demo/one_v_one.js
 //
@@ -9,7 +9,6 @@
 //   ONE_V_ONE_MEMORY        the server's largest heap (default 1G)
 //   ONE_V_ONE_PORT          the game port (default 25570)
 //   ONE_V_ONE_CONSOLE_PORT  the console port (default 25571)
-//   ONE_V_ONE_JOIN_SECONDS  how long to wait for the player (default 600)
 //
 // The fighter's settings are the walkthrough's, listed in settings.js. The Minecraft EULA is yours to accept, so this
 // never writes eula.txt and does not start without eula=true in it.
@@ -31,7 +30,9 @@ const CONSOLE_PORT = 25571
 const KEPT_PORTS = new Set([25565, 25575])   // the usual ports of a main server, never used here
 const STAGE = Object.freeze({ x: -200, y: -60, z: 0 })   // puts the arena at the world's middle
 const WINS_NEEDED = 2
-const MOST_FIGHTS = 5        // drawn fights do not count, and this keeps a run of them from going on forever
+const MOST_FIGHTS = 3
+const START_FOOD = 9         // 4.5 of 10 bars, and sprinting stops at 3, so nobody can run forever
+const PROMPT_MS = 2000
 const BETWEEN_FIGHTS_MS = 4000
 const LAST_WORD_MS = 5000
 const READY_SECONDS = 180
@@ -62,8 +63,6 @@ function serverOptions (env = process.env) {
   for (const port of [gamePort, consolePort]) {
     if (KEPT_PORTS.has(port)) throw new Error(`Port ${port} is left for your main server. Pick another one`)
   }
-  const joinSeconds = Number(env.ONE_V_ONE_JOIN_SECONDS || 600)
-  if (!Number.isInteger(joinSeconds) || joinSeconds < 1) throw new Error('ONE_V_ONE_JOIN_SECONDS must be a whole number of seconds')
   const memory = env.ONE_V_ONE_MEMORY || '1G'
   if (!/^[1-9]\d*[MG]$/.test(memory)) throw new Error('ONE_V_ONE_MEMORY must look like 900M or 1G')
   return {
@@ -72,8 +71,7 @@ function serverOptions (env = process.env) {
     java: env.ONE_V_ONE_JAVA || 'java',
     memory,
     gamePort,
-    consolePort,
-    joinSeconds
+    consolePort
   }
 }
 
@@ -214,6 +212,24 @@ async function stopServer (server) {
 
 // The same fight as the walkthrough. Only the way back differs: there is no base here, so he waits on his side
 class MatchController extends DemoController {
+  async finishDuel (run, outcome) {
+    if (outcome === 'fighter' && this.duelRun === run) this.fighterHp = scene.parseHealth(await this.send(`data get entity ${this.s.fighterName} Health`))
+    return super.finishDuel(run, outcome)
+  }
+
+  // Commands can not set a player's food, so a strong hunger effect drains it and stops at the target
+  async startFood (player) {
+    await this.sleep(100)
+    await this.send(`effect clear ${player} minecraft:saturation`)
+    await this.send(`effect give ${player} minecraft:hunger 15 255 true`)
+    for (let t = 0; t < 200; t++) {
+      const food = Number(/(\d+)\s*$/.exec(await this.send(`data get entity ${player} foodLevel`))?.[1])
+      if (!(food > START_FOOD)) break
+      await this.sleep(50)
+    }
+    await this.send(`effect clear ${player} minecraft:hunger`)
+  }
+
   duelReturnCommands () {
     const P = this.s.player
     const spot = scene.duelSpots(this.stage).player
@@ -259,13 +275,34 @@ async function playMatch ({ fight, tell, wait, fighterName }) {
     await tell(`Fight ${n}. First to ${WINS_NEEDED} wins.`)
     const outcome = await fight()
     if (outcome === 'player' || outcome === 'fighter') score[outcome]++
-    else if (outcome !== 'time') return { score, result: 'off', fights: n }
+    else if (outcome === 'time') {
+      score.fighter++
+      await tell(`Draw, the point goes to ${fighterName}.`)
+    } else return { score, result: 'off', fights: n }
     await tell(`Score: you ${score.player}, ${fighterName} ${score.fighter}.`)
     const result = matchResult(score, n)
     if (result) return { score, result, fights: n }
     await wait(BETWEEN_FIGHTS_MS)
   }
   return { score, result: 'draw', fights: MOST_FIGHTS }
+}
+
+// Reads the player's chat from the server's log. take() says whether he typed go since the last time it was asked
+function chatWatch (file, player) {
+  let at = fs.statSync(file).size
+  const said = new RegExp(`<${player}> go\\s*$`, 'im')
+  return {
+    take () {
+      const size = fs.statSync(file).size
+      if (size <= at) return false
+      const fd = fs.openSync(file, 'r')
+      const chunk = Buffer.alloc(size - at)
+      fs.readSync(fd, chunk, 0, chunk.length, at)
+      fs.closeSync(fd)
+      at = size
+      return said.test(chunk.toString('utf8'))
+    }
+  }
 }
 
 function fightOnce (controller) {
@@ -344,41 +381,60 @@ async function main (env = process.env) {
     await controller.send(`forceload add ${scene.arenaChunks(STAGE)}`)
     for (const c of scene.arenaCommands(STAGE)) await controller.sendLoaded(c)
 
-    log(`join localhost:${opts.gamePort} as ${settings.player}. Waiting up to ${opts.joinSeconds} seconds.`)
+    log(`join localhost:${opts.gamePort} as ${settings.player}, then type go in chat`)
+    const P = settings.player
+    const F = settings.fighterLabel ? `${settings.fighterName} - ${settings.fighterLabel}` : settings.fighterName
     const spot = scene.duelSpots(STAGE).player
-    let joined = false
-    for (let i = 0; i < opts.joinSeconds && !joined; i++) {
-      joined = isOnline(await controller.send('list'), settings.player)
-      if (!joined) await pause(1000)
-    }
-    if (!joined) throw new Error(`${settings.player} did not join in ${opts.joinSeconds} seconds`)
-    await controller.sendAll([`gamemode adventure ${settings.player}`, `clear ${settings.player}`,
-      `tp ${settings.player} ${spot.x} ${spot.y} ${spot.z} ${spot.yaw} 0`])
-    await pause(BETWEEN_FIGHTS_MS)
+    const chat = chatWatch(server.logFile, P)
 
-    // he left: the fight in progress stops, and that ends the match
+    // he left: the fight in progress stops, and the server waits for him
     watcher = setInterval(async () => {
       const run = controller.duelRun
-      if (!run || isOnline(await controller.send('list'), settings.player)) return
+      if (!run || isOnline(await controller.send('list'), P)) return
       if (controller.duelRun !== run) return
-      log(`${settings.player} left`)
+      log(`${P} left`)
       run.stopped = true
       run.child.stop()
     }, WATCH_MS)
 
-    const { score, result, fights } = await playMatch({
-      fight: () => fightOnce(controller),
-      tell: text => controller.tell(text),
-      wait: pause,
-      fighterName: settings.fighterName
-    })
-    clearInterval(watcher)
-    watcher = null
-    await controller.tell(`${LAST_WORDS[result]} You ${score.player}, ${settings.fighterName} ${score.fighter}.`)
-    log(`match over after ${fights} fights: ${result}, you ${score.player}, ${settings.fighterName} ${score.fighter}`)
-    await pause(LAST_WORD_MS)
-    await close()
-    return result === 'off' ? 1 : 0
+    for (;;) {
+      let here = false
+      chat.take()
+      while (!closing) {
+        const online = isOnline(await controller.send('list'), P)
+        if (online && !here) {
+          await controller.sendAll([`gamemode adventure ${P}`, `clear ${P}`, `effect give ${P} instant_health 1 3 true`, `tp ${P} ${spot.x} ${spot.y} ${spot.z} ${spot.yaw} 0`])
+          await controller.tell('Type go to start.')
+        }
+        here = online
+        if (online) await controller.send(`title ${P} actionbar ${JSON.stringify({ text: `Type go to fight ${F}`, color: 'aqua' })}`)
+        if (online && chat.take()) break
+        await pause(PROMPT_MS)
+      }
+      if (closing) return 0
+      const { score, result, fights } = await playMatch({
+        fight: async () => {
+          controller.fighterHp = null
+          const outcome = await fightOnce(controller)
+          if (outcome === 'fighter' && controller.fighterHp != null) {
+            const hp = Math.round(controller.fighterHp * 10) / 10
+            await controller.tell(`${F} won with ${hp} HP left (${hp / 2} hearts)`)
+          }
+          return outcome
+        },
+        tell: text => controller.tell(text),
+        wait: pause,
+        fighterName: F
+      })
+      log(`match over after ${fights} fights: ${result}, you ${score.player}, ${F} ${score.fighter}`)
+      if (result !== 'off') {
+        const headline = score.player === score.fighter ? 'Match tied' : score.fighter > score.player ? `${F} wins the match` : 'You win the match'
+        await controller.send(`title ${P} subtitle ${JSON.stringify({ text: `${F} ${score.fighter} - You ${score.player}`, color: 'white' })}`)
+        await controller.send(`title ${P} title ${JSON.stringify({ text: headline, color: 'gold' })}`)
+      } else await controller.tell(LAST_WORDS.off)
+      await controller.tell('Score reset. Type go.')
+      await pause(LAST_WORD_MS)
+    }
   } catch (err) {
     log(err.message)
     await close()

@@ -521,6 +521,7 @@ class DemoController {
     await this.send('gamerule pvp true')
     await this.send('gamerule natural_health_regeneration false')
     await this.sendAll(show.healthCommands())
+    await this.sendAll(show.nameCommands(F, this.s.fighterLabel))
     const child = this.spawnDuel({
       name: F,
       enemy: P,
@@ -559,11 +560,12 @@ class DemoController {
       await this.finishDuel(run, 'crashed')
       return
     }
-    await this.sendAll(scene.fighterKitCommands(P, spots.player, spots.player.yaw))
+    await this.sendAll(scene.fighterKitCommands(P, spots.player, spots.player.yaw, scene.PLAYER_KIT))
     await this.sendAll(scene.fighterKitCommands(F, spots.fighter, spots.fighter.yaw))
     run.p = await this.deaths(P)
     run.f = await this.deaths(F)
     await show.seedHealth({ send: c => this.send(c), sleep: this.sleep, name: P })
+    const food = this.startFood?.(P)
     const counted = await show.countdown({
       send: c => this.send(c),
       sleep: this.sleep,
@@ -572,6 +574,7 @@ class DemoController {
       pins: [{ name: P, ...spots.player }, { name: F, ...spots.fighter }],
       live: () => this.duelRun === run
     })
+    if (food) await food.catch(() => {})
     if (!counted || this.duelRun !== run) return
     run.barTimer = this.timers.setTimeout(() => { this.send(`bossbar remove ${show.BAR}`).catch(() => {}) }, show.FIGHT_TEXT_MS)
     child.go()

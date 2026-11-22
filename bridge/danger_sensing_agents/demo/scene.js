@@ -17,7 +17,7 @@ const ARENA_HALF = 10
 const ARENA_EAST = 200
 const ARENA_TILE = 4             // 5 by 5 floor squares
 const ARENA_TILES = ['yellow_concrete', 'black_concrete']
-const FIGHT_START = 6
+const FIGHT_START = 5
 const BASE_WEST = 16
 const BASE_HALF = 4
 const WALL_HEIGHT = 3
@@ -36,6 +36,14 @@ const FIGHT_KIT = Object.freeze([
   ['armor.head', 'diamond_helmet'], ['armor.chest', 'diamond_chestplate'], ['armor.legs', 'diamond_leggings'],
   ['armor.feet', 'diamond_boots'], ['hotbar.0', 'diamond_axe'], ['hotbar.1', 'diamond_sword'],
   ['weapon.offhand', 'shield'], ['hotbar.2', 'crossbow'], ['hotbar.3', 'bow'], ['inventory.0', 'arrow 6']
+])
+
+// The player's kit in a 1v1: the crossbow comes loaded, which is his head start, then the axe, sword and bow
+const PLAYER_KIT = Object.freeze([
+  ['armor.head', 'diamond_helmet'], ['armor.chest', 'diamond_chestplate'], ['armor.legs', 'diamond_leggings'],
+  ['armor.feet', 'diamond_boots'], ['weapon.offhand', 'shield'],
+  ['hotbar.0', 'crossbow[charged_projectiles=[{id:"minecraft:arrow",count:1}]]'],
+  ['hotbar.1', 'diamond_axe'], ['hotbar.2', 'diamond_sword'], ['hotbar.3', 'bow'], ['inventory.0', 'arrow 5']
 ])
 
 function hostileToRemove (version = '1.21.11') {
@@ -276,12 +284,12 @@ function arenaChunks (stage) {
   return `${a.x - a.half - 2} ${a.z - a.half - 2} ${a.x + a.half + 1} ${a.z + a.half + 1}`
 }
 
-function fighterKitCommands (name, spot, yaw) {
+function fighterKitCommands (name, spot, yaw, kit = FIGHT_KIT) {
   return [
     `gamemode adventure ${name}`,
     `clear ${name}`,
     `effect clear ${name}`,
-    ...FIGHT_KIT.map(([slot, item]) => `item replace entity ${name} ${slot} with ${item}`),
+    ...kit.map(([slot, item]) => `item replace entity ${name} ${slot} with ${item}`),
     `effect give ${name} instant_health 1 3 true`,
     `effect give ${name} saturation 1 20 true`,
     `tp ${name} ${spot.x} ${spot.y} ${spot.z} ${yaw} 0`
@@ -389,7 +397,7 @@ const parseHealth = reply => {
 
 module.exports = {
   TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands, doorCommands,
-  WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT,
+  WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT, PLAYER_KIT,
   hostileToRemove, purgeCommands, spots, at, baseOf, arenaOf, agentKitCommands, resetCommands, baseCommands,
   creeperCommands, zombieCommands, igniteCommands, arenaCommands, arenaChunks, fighterKitCommands, duelSpots, openSpot, forcedCommands,
   parseScore, parseHealth, summonCommand, agentHomeCommand, hasteCommand, endHasteCommand, pillarLayout, pillarCommands, pillarClearCommands,
