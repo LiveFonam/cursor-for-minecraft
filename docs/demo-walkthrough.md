@@ -12,6 +12,17 @@ flowchart LR
     F --> G["!1v1<br/>You against the axe fighter"]
 ```
 
+## Being built next
+
+These change the walkthrough below. If you pick this up in another session, this is the target:
+
+1. You start in your own first-person view inside a small base with a bed, chest, furnace and cobblestone walls. The agent stands in front of you. The dummy goes away.
+2. You tell the agent what to do in plain English. It walks off. You stay where you are and switch to spectator, so you can look around or fly after it.
+3. When it finishes, it comes back to the base, you return to a normal game mode, and it hands you the item while facing you.
+4. A chest version, `!chest`, starts with the base chest already stocked, so the agent uses it and skips the long pathway. Test this version too.
+5. The evil god stays a script plus a language model, with no neural network. Scripts handle spawning, timing and safety. Claude Haiku picks the plan from a fixed menu, like which wall to breach and how the 3 zombies attack. If the model fails, the scripted plan runs.
+6. `!evil` uses the base you already start in.
+
 ## Start it
 
 You need the agents server from [the setup guide](danger-sensing-agents-setup.md), running on this machine. Plain English needs an `ANTHROPIC_API_KEY` in your environment or in the git-ignored `.env`.
