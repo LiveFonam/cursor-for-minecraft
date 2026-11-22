@@ -22,6 +22,12 @@ These change the walkthrough below. If you pick this up in another session, this
 4. A chest version, `!chest`, starts with the base chest already stocked, so the agent uses it and skips the long pathway. Test this version too.
 5. The evil god stays a script plus a language model, with no neural network. Scripts handle spawning, timing and safety. Claude Haiku picks the plan from a fixed menu, like which wall to breach and how the 3 zombies attack. If the model fails, the scripted plan runs.
 6. `!evil` uses the base you already start in.
+7. The evil god is more than a model wrapper. Code maps where mobs can really walk and tests each plan on that map. Claude chooses among the plans that passed, adapts during the raid, and remembers what worked against this player.
+8. It can tell a base from a plain building or a dug-in hole. It looks for a respawn bed, chests and furnaces that have been used, blocks the player placed, time spent there and defenses. It rules out villages, temples and other structures the game generated.
+9. It can reach a player who dug into the ground. It finds the cheapest route through the ground, chains creeper blasts, and comes through nearby caves.
+10. Endermen can bridge a moat with real blocks from nearby, so zombies can cross and attack the base.
+11. The agent can't see ores through walls. It only knows about ore with a face it can actually see.
+12. Claude Haiku reads every plain English request, and each call logs the tokens it used.
 
 ## Start it
 
