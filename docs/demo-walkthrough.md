@@ -20,7 +20,17 @@ If you pick this up in another session, this is the target:
 2. It can tell a base from a plain building or a dug-in hole. It looks for a respawn bed, chests and furnaces that have been used, blocks the player placed, time spent there and defenses. It rules out villages, temples and other structures the game generated.
 3. It can reach a player who dug into the ground. It finds the cheapest route through the ground, chains creeper blasts, and comes through nearby caves.
 4. The night siege in step 7 passes its tests in a simulated world and still needs a full run on a real server.
-5. The small display in the corner of the screen becomes part of this repo. It shows the agent's health, food, distance from you, time gone on the job, ready and raw food, building blocks, tools with durability, and other items.
+
+## The corner display
+
+`bridge/danger_sensing_agents/demo/corner_display.js` keeps a small text file up to date with the agent's health, food, distance from the base, time gone on the job, model calls and cost, ready and raw food, building blocks, tools with durability, and other items. Point an on-screen overlay at that file.
+
+```sh
+DEMO_PLAYER=<your Minecraft name> \
+DEMO_HUD_FILE=<text file> \
+DEMO_JOB_LOG=<the demo's log> \
+node bridge/danger_sensing_agents/demo/corner_display.js
+```
 
 ## Start it
 
