@@ -75,6 +75,7 @@ STRAFE_FLIP_TICKS = 20
 STRAFE_FLIP_CHANCE = 0.3
 LOST_SIGHT_TICKS = 60
 
+STEER_ARRIVE = 0.35
 SWELL_START = 3.0
 SWELL_CANCEL = 7.0
 FUSE_TICKS = 30
@@ -236,6 +237,13 @@ class Mobs:
         self.shooter = np.full((n, sim.arrow_on.shape[1]), -1, dtype=np.int64)
         self.kills = np.zeros(n, dtype=np.int64)
         self.blasts = np.zeros(n, dtype=np.int64)
+        # An outside director (director.py) may steer a mob: walk to steer_to
+        # instead of the player, hold it from targeting the player, or light a
+        # creeper's fuse where it stands. All off unless a director sets them.
+        self.steer_on = np.zeros(shape, dtype=bool)
+        self.steer_to = np.zeros((n, m, 3))
+        self.steer_hold = np.zeros(shape, dtype=bool)
+        self.lit = np.zeros(shape, dtype=bool)
         self.damage_done = np.zeros(n)
         self.damage_fraction = np.zeros(n)
 
@@ -252,6 +260,9 @@ class Mobs:
         self.fire[idx] = 0
         self.kills[idx] = 0
         self.blasts[idx] = 0
+        self.steer_on[idx] = False
+        self.steer_hold[idx] = False
+        self.lit[idx] = False
         self.damage_done[idx] = 0.0
         self.damage_fraction[idx] = 0.0
 
@@ -294,6 +305,9 @@ class Mobs:
         self.free_run[env, slot] = 0
         self.detour_age[env, slot] = 0
         self.blocked[env, slot] = False
+        self.steer_on[env, slot] = False
+        self.steer_hold[env, slot] = False
+        self.lit[env, slot] = False
 
     def spawn_roster(self, idx: np.ndarray, kinds: np.ndarray) -> None:
         """Spawn a roster of shape (len(idx), m) around each selected player. -1 leaves a slot empty."""
@@ -396,7 +410,8 @@ class Mobs:
         gap, dist_sq, sight = self._sense(env, slot)
         self._update_targets(env, slot, dist_sq, sight)
         move_f, move_s, speed = self._intent(env, slot, gap, dist_sq, sight)
-        self._motion(env, slot, gap, move_f, move_s, speed)
+        walk = self._steer(env, slot, gap, move_f, move_s, speed)
+        self._motion(env, slot, walk, move_f, move_s, speed)
         self._push()
         self._melee_attacks(env, slot, sight)
         self._bow_attacks(env, slot, sight)
@@ -406,6 +421,28 @@ class Mobs:
         self.hurt_timer = np.maximum(self.hurt_timer - 1, 0)
         self.attack_wait = np.maximum(self.attack_wait - 1, 0)
         self.goal_wait = np.maximum(self.goal_wait - 1, 0)
+
+    def ignite(self, env: int, slot: int) -> None:
+        """Light a creeper's normal fuse where it stands, as flint and steel would."""
+        if self.alive[env, slot] and self.kind[env, slot] == CREEPER:
+            self.lit[env, slot] = True
+
+    def _steer(
+        self, env: np.ndarray, slot: np.ndarray, gap: np.ndarray, move_f: np.ndarray, move_s: np.ndarray, speed: np.ndarray
+    ) -> np.ndarray:
+        """Point steered mobs at their spot instead of the player. Return the walking gap."""
+        steered = self.steer_on[env, slot]
+        if not steered.any():
+            return gap
+        walk = gap.copy()
+        to = self.steer_to[env, slot] - self.pos[env, slot]
+        walk[steered] = to[steered]
+        near = np.hypot(to[:, 0], to[:, 2]) < STEER_ARRIVE
+        lit = self.swell_dir[env, slot] > 0
+        go = steered & ~near & ~lit
+        move_f[steered] = np.where(go[steered], speed[steered] * MOVE_INPUT, 0.0)
+        move_s[steered] = 0.0
+        return walk
 
     def _sense(self, env: np.ndarray, slot: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         sim = self.sim
@@ -443,6 +480,8 @@ class Mobs:
         roll = sim.rng.random(len(env)) < TARGET_CHANCE
         target = self.targeting[env, slot] | (hostile & near & sight & roll)
         target &= player_alive & (near | ~hostile) & (unseen <= UNSEEN_LIMIT)
+        # a mob a director steers or holds back does not pick the player itself
+        target &= ~(self.steer_on[env, slot] | self.steer_hold[env, slot])
 
         calm = ~hostile
         if calm.any():
@@ -870,8 +909,10 @@ class Mobs:
             return
         target = self.targeting[env, slot]
         swell = self.swell[env, slot]
-        active = live & ((self.swell_dir[env, slot] > 0) | (target & (dist_sq < SWELL_START**2)))
-        rising = active & target & (dist_sq <= SWELL_CANCEL**2) & sight
+        lit = self.lit[env, slot]
+        active = live & ((self.swell_dir[env, slot] > 0) | (target & (dist_sq < SWELL_START**2)) | lit)
+        # a lit fuse burns down whatever the creeper sees, like flint and steel
+        rising = active & ((target & (dist_sq <= SWELL_CANCEL**2) & sight) | lit)
         direction = np.where(rising, 1, -1)
         self.swell_dir[env[live], slot[live]] = direction[live]
         after = np.clip(swell + direction, 0, FUSE_TICKS)

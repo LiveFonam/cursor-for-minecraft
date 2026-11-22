@@ -133,6 +133,28 @@ aims without lead by at least 10 points.
 Blocking. A scripted archer shoots at the policy. To pass, the policy must block at least 85%
 of arrows while keeping the shield up at most 70% of the time.
 
+## Mob director
+
+`src/fighter/director.py` is the mob director from `director/` (the Paper plugin) running in the simulator. It is an invisible agent that turns the mobs of an arena against the player in seat 0. The simulator's mobs walk straight at the player, so the director does the pathfinding. It finds a route over the blocks a zombie can walk on, and hands each mob its next waypoint through three opt-in arrays on `Mobs`:
+
+- `steer_on` and `steer_to` send a mob somewhere other than the player.
+- `steer_hold` stops it from targeting the player.
+- `ignite()` lights a creeper's fuse where it stands.
+
+All of these are off unless a director sets them, so plain mob fights behave exactly as before.
+
+```python
+director = Director(sim, env=0)
+for _ in range(ticks):
+    director.update()
+    sim.step(actions)
+print(director.status())
+```
+
+When the player is shut in, it reads the blocks for the weakest door, wall or roof: at most 2 blocks thick, and no stronger than cobblestone. One creeper walks there while the others hold 8 blocks back, and the creeper lights its fuse at the wall. After the simulator's explosion breaks the blocks, the director looks again. A way in releases the mobs. No way in, or a creeper killed before it goes off, fails the breach and starts a 30 second cooldown.
+
+`tests/test_director.py` plays the same cases the plugin passed on a real server: an open door, a closed door, the creeper killed first, a blast at a 2 thick wall, a shallow underground room, obsidian, a skeleton, reinforcements with a stop, and the player's death.
+
 ## Credits
 
 Fighter depends on these public libraries, installed through uv:
