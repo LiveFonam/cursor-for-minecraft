@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 
 from . import constants as C
 from .combat import CHARGE_GATE
-from .opponents import LEAGUE, SCRIPTED
+from .opponents import HARD_SCRIPTED, LEAGUE, SCRIPTED
 from .stance import StanceRules
 from .train import AXE_ONLY, CURRICULUM, Stage
 
@@ -51,7 +51,7 @@ COMBO_STAGES = (
     ),
     Stage(
         "shield_break",
-        {"shielder": 2.0, "axeman": 1.0, "walker": 0.5},
+        {"shielder": 2.0, "shield_holder": 2.0, "axeman": 1.0, "walker": 0.5},
         0.0,
         300_000,
         0.6,
@@ -60,7 +60,7 @@ COMBO_STAGES = (
     ),
     Stage(
         "range",
-        {"retreater": 1.0, "archer": 1.0, "hit_and_run": 1.0, "rusher": 1.0},
+        {"retreater": 1.0, "archer": 1.0, "hit_and_run": 1.0, "rusher": 1.0, "shield_holder": 0.5},
         0.0,
         300_000,
         0.6,
@@ -81,3 +81,17 @@ PLANS = {
     "foundations": Plan(FOUNDATION_STAGES, FOUNDATION_REWARD, StanceRules(), CHARGE_GATE),
     "combo": Plan(COMBO_STAGES, COMBO_REWARD, StanceRules(followup=True), CHARGE_GATE, True),
 }
+ARENA_LEAGUE_WEIGHT = 4.0
+ARENA_HARD_WEIGHT = 2.0
+ARENA_OTHER_WEIGHT = 0.25
+ARENA_FOCUS = {"shield_holder": 1.5, "rusher": 1.0, "axeman": 1.0, "pvp_combo": 2.0, "pvp_sweat": 2.0}
+
+
+def arena_stage(plan: str) -> Stage:
+    """Return the one stage of an evolved child: the league, the focus and hard fighters and the rest."""
+    last = PLANS[plan].stages[-1]
+    mix = {LEAGUE: ARENA_LEAGUE_WEIGHT}
+    for name in SCRIPTED:
+        if name != "idle":
+            mix[name] = ARENA_FOCUS.get(name, ARENA_HARD_WEIGHT if name in HARD_SCRIPTED else ARENA_OTHER_WEIGHT)
+    return Stage("arena", mix, 2.0, 0, last.shaping, last.weapons, keep=dict(ARENA_FOCUS))
