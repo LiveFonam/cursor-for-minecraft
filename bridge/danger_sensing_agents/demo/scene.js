@@ -15,22 +15,27 @@ const DEATHS = 'demo_deaths'
 const ARENA_Y = 100
 const ARENA_HALF = 10
 const ARENA_EAST = 200
+const ARENA_TILE = 4             // 5 by 5 floor squares
+const ARENA_TILES = ['yellow_concrete', 'black_concrete']
 const FIGHT_START = 6
 const BASE_WEST = 16
 const BASE_HALF = 4
 const WALL_HEIGHT = 3
 const CLEAN_RADIUS = 64
 const CLEAR_HEIGHT = 12         // a whole oak, so no crown is left floating over the plot
+const PILLAR_BLOCK = 'gray_concrete'
+const PILLAR_HEIGHT = 3         // too tall to jump over, and it stops a crossbow bolt
+const PILLAR_SIZES = Object.freeze([[1, 2], [2, 1], [1, 3], [3, 1], [2, 2]])
+const PILLAR_FROM_EDGE = 2      // room to walk between a pillar and the arena wall
+const PILLAR_FROM_SPAWN = 3     // open blocks kept on every side of a spawn spot
+const PILLAR_GAP = 2            // open blocks between two pillars, so nobody gets wedged
 
-const PLACE_ON = '["yellow_concrete","black_concrete","stone_bricks","cobblestone"]'
 // What !chest puts in the base chest: a diamond pickaxe's diamonds and sticks, and the planks for a crafting table
 const CHEST_STOCK = Object.freeze([['diamond', 3], ['stick', 2], ['oak_planks', 4]])
 const FIGHT_KIT = Object.freeze([
   ['armor.head', 'diamond_helmet'], ['armor.chest', 'diamond_chestplate'], ['armor.legs', 'diamond_leggings'],
   ['armor.feet', 'diamond_boots'], ['hotbar.0', 'diamond_axe'], ['hotbar.1', 'diamond_sword'],
-  ['weapon.offhand', 'shield'], ['hotbar.2', 'crossbow'], ['hotbar.3', 'bow'], ['inventory.0', 'arrow 6'],
-  ['hotbar.5', `cobblestone[can_place_on=[{blocks:${PLACE_ON}}]] 64`],
-  ['hotbar.6', `lava_bucket[can_place_on=[{blocks:${PLACE_ON}}]]`]
+  ['weapon.offhand', 'shield'], ['hotbar.2', 'crossbow'], ['hotbar.3', 'bow'], ['inventory.0', 'arrow 6']
 ])
 
 function hostileToRemove (version = '1.21.11') {
@@ -241,22 +246,34 @@ function igniteCommands (stage) {
   ]
 }
 
+// A flat 20 by 20 arena. Barrier is the real wall and glass one block outside shows where it ends. Both fighters are in
+// adventure mode with nothing that can break or place a block, so the floor stays as it is
 function arenaCommands (stage) {
   const a = arenaOf(stage)
   const lo = { x: a.x - a.half, z: a.z - a.half }
   const hi = { x: a.x + a.half - 1, z: a.z + a.half - 1 }
   const y = a.y
-  return [
+  const out = [
     `fill ${lo.x - 1} ${y - 1} ${lo.z - 1} ${hi.x + 1} ${y + 5} ${hi.z + 1} barrier hollow`,
     `fill ${lo.x} ${y - 2} ${lo.z} ${hi.x} ${y - 2} ${hi.z} stone`,
-    `fill ${lo.x} ${y - 1} ${lo.z} ${hi.x} ${y - 1} ${hi.z} stone_bricks`,
     `fill ${lo.x} ${y} ${lo.z} ${hi.x} ${y + 4} ${hi.z} air`
   ]
+  for (let i = 0; i * ARENA_TILE < a.half * 2; i++) {
+    for (let j = 0; j * ARENA_TILE < a.half * 2; j++) {
+      const x = lo.x + i * ARENA_TILE
+      const z = lo.z + j * ARENA_TILE
+      out.push(`fill ${x} ${y - 1} ${z} ${x + ARENA_TILE - 1} ${y - 1} ${z + ARENA_TILE - 1} ${ARENA_TILES[(i + j) % 2]}`)
+    }
+  }
+  const [x0, x1, z0, z1] = [lo.x - 2, hi.x + 2, lo.z - 2, hi.z + 2]
+  out.push(`fill ${x0} ${y - 1} ${z0} ${x1} ${y + 5} ${z0} glass`, `fill ${x0} ${y - 1} ${z1} ${x1} ${y + 5} ${z1} glass`,
+    `fill ${x0} ${y - 1} ${z0} ${x0} ${y + 5} ${z1} glass`, `fill ${x1} ${y - 1} ${z0} ${x1} ${y + 5} ${z1} glass`)
+  return out
 }
 
 function arenaChunks (stage) {
   const a = arenaOf(stage)
-  return `${a.x - a.half - 1} ${a.z - a.half - 1} ${a.x + a.half} ${a.z + a.half}`
+  return `${a.x - a.half - 2} ${a.z - a.half - 2} ${a.x + a.half + 1} ${a.z + a.half + 1}`
 }
 
 function fighterKitCommands (name, spot, yaw) {
@@ -278,6 +295,60 @@ function duelSpots (stage) {
     fighter: { x: a.x + FIGHT_START + 0.5, y: a.y, z: a.z + 0.5, yaw: 90 }
   }
 }
+
+// How many open blocks lie between two footprints, on the axis where they are furthest apart. Touching is 0
+function blocksBetween (a, b) {
+  return Math.max(a.x1 - b.x2, b.x1 - a.x2, a.z1 - b.z2, b.z1 - a.z2) - 1
+}
+
+// The same pillar on the other side of the arena's middle, so neither fighter's side is better
+function mirrorPillar (a, p) {
+  const [sx, sz] = [2 * a.x - 1, 2 * a.z - 1]
+  return { x1: sx - p.x2, x2: sx - p.x1, z1: sz - p.z2, z2: sz - p.z1 }
+}
+
+// Every place a pillar of this size can stand with its mirror, clear of the walls, both spawns and the pillars so far
+function pillarPlaces (stage, [w, d], taken) {
+  const a = arenaOf(stage)
+  const spawns = Object.values(duelSpots(stage)).map(s => {
+    const [x, z] = [Math.floor(s.x), Math.floor(s.z)]
+    return { x1: x, x2: x, z1: z, z2: z }
+  })
+  const out = []
+  for (let x1 = a.x - a.half + PILLAR_FROM_EDGE; x1 + w - 1 <= a.x + a.half - 1 - PILLAR_FROM_EDGE; x1++) {
+    for (let z1 = a.z - a.half + PILLAR_FROM_EDGE; z1 + d - 1 <= a.z + a.half - 1 - PILLAR_FROM_EDGE; z1++) {
+      const pillar = { x1, x2: x1 + w - 1, z1, z2: z1 + d - 1 }
+      const mirror = mirrorPillar(a, pillar)
+      if (blocksBetween(pillar, mirror) < PILLAR_GAP) continue
+      if ([pillar, mirror].some(p => spawns.some(s => blocksBetween(p, s) < PILLAR_FROM_SPAWN))) continue
+      if ([pillar, mirror].some(p => taken.some(t => blocksBetween(p, t) < PILLAR_GAP))) continue
+      out.push(pillar)
+    }
+  }
+  return out
+}
+
+// Fresh cover for one fight: 1 or 2 pairs of solid pillars, each pair mirrored across the arena's middle
+function pillarLayout (stage, rng = Math.random) {
+  const a = arenaOf(stage)
+  const pick = list => list[Math.min(list.length - 1, Math.floor(rng() * list.length))]
+  const pairs = rng() < 0.5 ? 1 : 2
+  const out = []
+  for (let i = 0; i < pairs; i++) {
+    const places = pillarPlaces(stage, pick(PILLAR_SIZES), out)
+    if (!places.length) break
+    const pillar = pick(places)
+    out.push(pillar, mirrorPillar(a, pillar))
+  }
+  return out
+}
+
+const pillarFill = (stage, p, block) => {
+  const y = arenaOf(stage).y
+  return `fill ${p.x1} ${y} ${p.z1} ${p.x2} ${y + PILLAR_HEIGHT - 1} ${p.z2} ${block}`
+}
+const pillarCommands = (stage, pillars) => pillars.map(p => pillarFill(stage, p, PILLAR_BLOCK))
+const pillarClearCommands = (stage, pillars) => pillars.map(p => pillarFill(stage, p, 'air'))
 
 // A place by the agent where a mob fits: two free blocks over solid ground, closest ring first
 function openSpot (blockAt, pos, { near = 4, far = 8, drop = 2 } = {}) {
@@ -310,10 +381,17 @@ const parseScore = reply => {
   return m ? Number(m[1]) : 0
 }
 
+// A health score, or null when the server has none yet: unknown is not the same as dead
+const parseHealth = reply => {
+  const m = String(reply).match(/has (\d+) \[/)
+  return m ? Number(m[1]) : null
+}
+
 module.exports = {
   TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands, doorCommands,
   WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT,
   hostileToRemove, purgeCommands, spots, at, baseOf, arenaOf, agentKitCommands, resetCommands, baseCommands,
   creeperCommands, zombieCommands, igniteCommands, arenaCommands, arenaChunks, fighterKitCommands, duelSpots, openSpot, forcedCommands,
-  parseScore, summonCommand, agentHomeCommand, hasteCommand, endHasteCommand
+  parseScore, parseHealth, summonCommand, agentHomeCommand, hasteCommand, endHasteCommand, pillarLayout, pillarCommands, pillarClearCommands,
+  mirrorPillar, blocksBetween, PILLAR_BLOCK, PILLAR_HEIGHT, PILLAR_FROM_EDGE, PILLAR_FROM_SPAWN, PILLAR_GAP
 }

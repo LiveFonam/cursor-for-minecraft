@@ -47,6 +47,14 @@ const INPUT_ENEMY_HURT = 46
 const INPUT_ENEMY_SHIELD_UP = 52
 const INPUT_ENEMY_SHIELD_DISABLED = 54
 const INPUT_ENEMY_FACING = 55
+const INPUT_CLEAR_LINE = 37
+const INPUT_AIM_WIDTHS = 79
+const GUN_MIN_RANGE = 4.5     // inside this the fight is the axe's
+const GUN_FORCE_RANGE = 7     // past this the crossbow comes out, loaded or not
+const GUN_REST_STEPS = 8      // decisions the crossbow stays away after a shield turned it back
+const CHASE_RANGE = 3.5       // with the axe out it runs at an enemy further than this
+const CHASE_FACING = 0.7      // only while roughly facing it
+const INPUT_AIM_COS = 27
 const BOW_SPEED = 3.0
 const BOW_FULL_DRAW_TICKS = 20
 const BOW_MIN_DRAW_TICKS = 3
@@ -536,6 +544,8 @@ class Fighter {
     this.arena = options.arena ?? null
     this.borderHalf = options.arena?.half ?? 12
     this.planRules = options.planRules ?? !!options.arena
+    this.rangeRules = !!options.rangeRules
+    this.gunForceRange = options.gunForceRange ?? GUN_FORCE_RANGE
     this.readyGate = options.readyGate ?? (this.planRules ? PLAN_READY_GATE : FULL_CHARGE)
     this.allowedWeapons = options.allowedWeapons ?? (this.planRules ? new Set(['axe', 'sword', 'crossbow']) : null)
     this.memory = new SeenBlocks(bot)
@@ -1122,6 +1132,36 @@ class Fighter {
     return Math.hypot(dx, dy, dz) <= AXE_RULE_RANGE
   }
 
+  // The range habits. Past 7 blocks the crossbow is out, from 4.5 blocks it locks on, reloads the moment it is empty and
+  // fires the moment the aim is on a target with no shield facing it. A raised shield facing it sends it back to the axe
+  // for a moment, and with the axe out it runs at an enemy that is out of reach
+  applyRangeRules (mask, at, fix, obs, distance, canCrossbow, canAxe, axe, crossbow) {
+    const seen = obs[INPUT_ENEMY_IN_SIGHT] > 0.5
+    const guarded = obs[INPUT_ENEMY_SHIELD_UP] > 0.5 && obs[INPUT_ENEMY_FACING] > 0
+    if (this.noGunSteps > 0) this.noGunSteps--
+    if (this.weapon() === 'axe' && seen && distance >= CHASE_RANGE && obs[INPUT_AIM_COS] > CHASE_FACING) {
+      fix(FORWARD, 1)
+      fix(SPRINT, 1)
+    }
+    if (guarded && distance >= GUN_MIN_RANGE) {
+      this.openingLoad = false
+      this.noGunSteps = GUN_REST_STEPS
+      if (this.weapon() !== 'crossbow') mask[at + crossbow] = 0
+      else if (canAxe && !this.charging) fix(WEAPON, axe)
+      return
+    }
+    if (seen && canCrossbow && !this.noGunSteps && (this.loaded || this.arrows > 0) && distance >= this.gunForceRange) fix(WEAPON, crossbow)
+    if (this.weapon() !== 'crossbow' || !seen || distance < GUN_MIN_RANGE) return
+    fix(LOCK_AIM, 1)
+    if (!this.loaded) {
+      if (this.arrows > 0) fix(USE, 1)
+      return
+    }
+    const aimed = obs[INPUT_AIM_WIDTHS] * 5 < 1 && obs[INPUT_CLEAR_LINE] > 0.5
+    const hold = !aimed || obs[INPUT_ENEMY_HURT] > ENEMY_HURT_WINDOW
+    fix(USE, !hold && !this.useHeld ? 1 : 0)
+  }
+
   // Load the crossbow first, fire it at clear targets, hold fire at a raised shield that faces this bot and in the
   // enemy's hurt window, put it away inside axe range, and keep the sword for while the enemy's shield is disabled.
   applyPlanRules (mask) {
@@ -1142,7 +1182,10 @@ class Fighter {
 
     const load = this.charging ? this.loadTicks : 0
     const loading = this.openingLoad || load > 0
-    const abort = loading && this.hurtTimer > 0 && load / CROSSBOW_LOAD_TICKS < LOAD_ABORT_PROGRESS && canAxe
+    const distance = obs[INPUT_ENEMY_DISTANCE] * 32
+    const closing = this.rangeRules && distance < GUN_MIN_RANGE
+    const guardedFar = this.rangeRules && distance >= GUN_MIN_RANGE && obs[INPUT_ENEMY_SHIELD_UP] > 0.5 && obs[INPUT_ENEMY_FACING] > 0
+    const abort = loading && (this.hurtTimer > 0 || closing || guardedFar) && load / CROSSBOW_LOAD_TICKS < LOAD_ABORT_PROGRESS && canAxe
     const carry = loading && !abort && canCrossbow
     let followUp = false
     if (abort) {
@@ -1170,7 +1213,8 @@ class Fighter {
         }
       }
     }
-    if (!abort && !carry && !followUp && canAxe && this.axeInRuleRange()) {
+    if (this.rangeRules && !abort && !followUp) this.applyRangeRules(mask, at, fix, obs, distance, canCrossbow, canAxe, axe, crossbow)
+    if (!abort && !carry && !followUp && canAxe && (closing || this.axeInRuleRange())) {
       mask[at + crossbow] = 0
       if (holding) mask[at] = 0
     }
@@ -1425,6 +1469,7 @@ class Fighter {
     this.ticks = 0
     this.lastObs = null
     this.openingLoad = true
+    this.noGunSteps = 0
     this.shieldUp = false
     this.secondClick = false
     this.ticksSinceSwing = 1000

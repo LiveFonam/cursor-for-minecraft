@@ -5,6 +5,7 @@ const scene = require('./scene')
 const { namesOf } = require('../goal_plan')
 const { EvilRaid } = require('./evil_raid')
 const { EvilHunt } = require('./evil_hunt')
+const show = require('./show')
 
 const ENDS_EVIL = new Set(['reset', 'chest', 'stop', 'duel'])
 const PURGE_MS = 4000
@@ -12,7 +13,6 @@ const CAMERA_MS = 3000
 const CAMERA_TRIES = 3
 const DUEL_POLL_MS = 1000
 const DUEL_READY_MS = 90000
-const DUEL_COUNTDOWN_MS = 3000
 const BACKSTOP_DIRECTOR_MS = 40000
 const BACKSTOP_SCRIPT_MS = 3000
 const BLAST_WAIT_MS = 2000        // a lit creeper goes off in 1.5 seconds
@@ -28,8 +28,9 @@ const REAL_TIMERS = { setInterval, clearInterval, setTimeout, clearTimeout, now:
 class DemoController {
   // agents: agentBot(), stopAgent(), runTask(text), forgetChest(pos). spawnDuel(options) gives an emitter of 'ready' and
   // 'exit' with go() and stop(). brain (optional) picks the evil god's plan, and without one the breach is scripted
-  constructor ({ settings, rcon, agents, spawnDuel, log = () => {}, sleep = defaultSleep, timers = REAL_TIMERS, hostile, brain = null }) {
+  constructor ({ settings, rcon, agents, spawnDuel, log = () => {}, sleep = defaultSleep, timers = REAL_TIMERS, hostile, brain = null, rng = Math.random }) {
     this.brain = brain
+    this.rng = rng
     this.raid = null
     this.hunt = null
     this.evilOn = false       // set the moment !evil is typed, cleared the moment anything ends it
@@ -115,8 +116,11 @@ class DemoController {
     if (this.baseLoaded) this.send(`forceload remove ${scene.baseChunks(this.stage)}`)
     this.baseLoaded = false
     if (this.duelRun) {
-      this.timers.clearInterval(this.duelRun.timer)
-      this.duelRun.child.stop()
+      const run = this.duelRun
+      this.timers.clearInterval(run.timer)
+      if (run.barTimer) this.timers.clearTimeout(run.barTimer)
+      this.sendAll([...show.clearCommands([this.s.player, this.s.fighterName]), ...scene.pillarClearCommands(this.stage, run.pillars || [])])
+      run.child.stop()
       this.duelRun = null
     }
   }
@@ -516,6 +520,7 @@ class DemoController {
     await this.send(`whitelist add ${F}`)
     await this.send('gamerule pvp true')
     await this.send('gamerule natural_health_regeneration false')
+    await this.sendAll(show.healthCommands())
     const child = this.spawnDuel({
       name: F,
       enemy: P,
@@ -527,7 +532,8 @@ class DemoController {
       policy: this.s.policyScript,
       run: this.s.fighterRun,
       python: this.s.python,
-      sourceRoot: this.s.sourceRoot
+      sourceRoot: this.s.sourceRoot,
+      neuronsPort: this.s.neuronsPort
     })
     const run = { child, chunks, regen, timer: null, p: 0, f: 0, deadline: 0, polling: false }
     this.duelRun = run
@@ -545,13 +551,29 @@ class DemoController {
       await this.finishDuel(run, 'crashed')
       return
     }
+    run.pillars = scene.pillarLayout(this.stage, this.rng)
+    try {
+      for (const c of scene.pillarCommands(this.stage, run.pillars)) await this.sendLoaded(c)
+    } catch (err) {
+      this.log(`duel: ${err.message}`)
+      await this.finishDuel(run, 'crashed')
+      return
+    }
     await this.sendAll(scene.fighterKitCommands(P, spots.player, spots.player.yaw))
     await this.sendAll(scene.fighterKitCommands(F, spots.fighter, spots.fighter.yaw))
     run.p = await this.deaths(P)
     run.f = await this.deaths(F)
-    await this.tell('Fight in 3 seconds!')
-    await this.sleep(DUEL_COUNTDOWN_MS)
-    if (this.duelRun !== run) return
+    await show.seedHealth({ send: c => this.send(c), sleep: this.sleep, name: P })
+    const counted = await show.countdown({
+      send: c => this.send(c),
+      sleep: this.sleep,
+      viewer: P,
+      names: [P, F],
+      pins: [{ name: P, ...spots.player }, { name: F, ...spots.fighter }],
+      live: () => this.duelRun === run
+    })
+    if (!counted || this.duelRun !== run) return
+    run.barTimer = this.timers.setTimeout(() => { this.send(`bossbar remove ${show.BAR}`).catch(() => {}) }, show.FIGHT_TEXT_MS)
     child.go()
     run.deadline = this.timers.now() + this.s.fightSeconds * 1000
     run.timer = this.timers.setInterval(() => {
@@ -567,6 +589,14 @@ class DemoController {
     if (p > run.p) await this.enqueue(() => this.finishDuel(run, 'fighter'))
     else if (f > run.f) await this.enqueue(() => this.finishDuel(run, 'player'))
     else if (this.timers.now() >= run.deadline) await this.enqueue(() => this.finishDuel(run, 'time'))
+    else await this.sendHealth(run)
+  }
+
+  // The opponent's real health for the neuron screen. It goes to the page only and never into the fighter's inputs
+  async sendHealth (run) {
+    if (!this.s.neuronsPort || !run.child.hp) return
+    const hp = scene.parseHealth(await this.send(`scoreboard players get ${this.s.player} ${show.HEALTH}`))
+    if (hp !== null && this.duelRun === run) run.child.hp(hp)
   }
 
   async finishDuel (run, outcome) {
@@ -580,17 +610,18 @@ class DemoController {
     if (!run) return
     this.duelRun = null
     if (run.timer) this.timers.clearInterval(run.timer)
-    run.child.stop()
+    if (run.barTimer) this.timers.clearTimeout(run.barTimer)
     const { player: P, fighterName: F } = this.s
+    await this.sendAll(show.clearCommands([P, F]))
+    run.child.stop()
     const a = scene.arenaOf(this.stage)
     if (run.regen) await this.send(`gamerule natural_health_regeneration ${run.regen}`)
     await this.send(`kill @e[type=minecraft:item,x=${a.x},y=${a.y},z=${a.z},distance=..30]`)
     await this.send(`kill @e[type=minecraft:arrow,x=${a.x},y=${a.y},z=${a.z},distance=..30]`)
+    await this.sendAll(scene.pillarClearCommands(this.stage, run.pillars || []))
     await this.send(`forceload remove ${run.chunks}`)
     await this.send(`whitelist remove ${F}`)
-    const p = scene.spots(this.stage).player
-    await this.sendAll([`clear ${P}`, `effect clear ${P}`, `effect give ${P} instant_health 1 3 true`, `gamemode creative ${P}`,
-      `tp ${P} ${p.x + 0.5} ${p.y} ${p.z + 0.5} -90 0`])
+    await this.sendAll(this.duelReturnCommands())
     const words = {
       fighter: 'The fighter won.',
       player: 'You beat the fighter!',
@@ -599,6 +630,15 @@ class DemoController {
       stopped: 'Fight stopped.'
     }
     await this.tell(words[outcome])
+    this.onDuelEnd?.(outcome)
+  }
+
+  // Where the player goes when a fight ends: back to his spot in the base
+  duelReturnCommands () {
+    const P = this.s.player
+    const p = scene.spots(this.stage).player
+    return [`clear ${P}`, `effect clear ${P}`, `effect give ${P} instant_health 1 3 true`, `gamemode creative ${P}`,
+      `tp ${P} ${p.x + 0.5} ${p.y} ${p.z + 0.5} -90 0`]
   }
 }
 
