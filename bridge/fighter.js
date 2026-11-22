@@ -54,6 +54,20 @@ const GUN_FORCE_RANGE = 7     // past this the crossbow comes out, loaded or not
 const GUN_REST_STEPS = 8      // decisions the crossbow stays away after a shield turned it back
 const CHASE_RANGE = 3.5       // with the axe out it runs at an enemy further than this
 const CHASE_FACING = 0.7      // only while roughly facing it
+const INPUT_ON_GROUND = 4
+const INPUT_SPRINT = 5
+const INPUT_IN_WATER = 8
+const INPUT_FALL = 11
+const INPUT_AXE = 12
+const INPUT_CHARGE = 16
+const INPUT_SHIELD = 19
+const INPUT_BODY_DISTANCE = 33
+const INPUT_CROSSHAIR = 35
+const CRIT_RANGE = 4.0        // a jump started here still comes down with the enemy in reach
+const CRIT_CHARGE = 0.9
+const CRIT_JUMP_CHARGE = 0.5  // 8 ticks before the charge is ready, so it is ready when the fall starts
+const CRIT_LEAVING = 2.7      // a ready swing at a body this far away is taken now, before it leaves the 3 block reach
+const CLIMBABLE = new Set(['ladder', 'vine', 'scaffolding', 'twisting_vines', 'twisting_vines_plant', 'weeping_vines', 'weeping_vines_plant', 'cave_vines', 'cave_vines_plant'])
 const INPUT_AIM_COS = 27
 const BOW_SPEED = 3.0
 const BOW_FULL_DRAW_TICKS = 20
@@ -545,6 +559,7 @@ class Fighter {
     this.borderHalf = options.arena?.half ?? 12
     this.planRules = options.planRules ?? !!options.arena
     this.rangeRules = !!options.rangeRules
+    this.critRule = !!options.critRule
     this.gunForceRange = options.gunForceRange ?? GUN_FORCE_RANGE
     this.readyGate = options.readyGate ?? (this.planRules ? PLAN_READY_GATE : FULL_CHARGE)
     this.allowedWeapons = options.allowedWeapons ?? (this.planRules ? new Set(['axe', 'sword', 'crossbow']) : null)
@@ -1222,6 +1237,40 @@ class Fighter {
       mask[at + sword] = 0
       if (w === 'sword' && this.canSwitch(mask)) mask[at] = 0
     }
+    if (this.critRule) this.applyCritRule(mask, obs, fix)
+  }
+
+  // States where the server never counts a crit, beyond water, which is an input
+  critBarred () {
+    const bot = this.bot
+    const me = bot.entity
+    if (bot.vehicle || me.isInWeb) return true
+    if (CLIMBABLE.has(bot.blockAt?.(me.position, false)?.name)) return true
+    const blindness = bot.registry?.effectsByName?.blindness
+    return !!(blindness && me.effects?.[blindness.id])
+  }
+
+  // With the axe out and the enemy close: jump so the charge is ready in the fall, keep sprint off in the air, hold the
+  // swing until the fall and take it there. A raised shield facing this bot is hit at once.
+  applyCritRule (mask, obs, fix) {
+    if (obs[INPUT_AXE] <= 0.5 || obs[INPUT_ENEMY_IN_SIGHT] <= 0.5 || obs[INPUT_ENEMY_DISTANCE] * 32 >= CRIT_RANGE) return
+    if (obs[INPUT_SHIELD] >= 0.5 || obs[INPUT_IN_WATER] >= 0.5 || this.critBarred()) return
+    const aimed = obs[INPUT_CROSSHAIR] > 0.5
+    if (obs[INPUT_ENEMY_SHIELD_UP] > 0.5 && obs[INPUT_ENEMY_FACING] > 0) {
+      if (aimed) fix(ATTACK, 1)
+      return
+    }
+    const grounded = obs[INPUT_ON_GROUND] > 0.5
+    const charge = obs[INPUT_CHARGE]
+    const soon = charge >= CRIT_JUMP_CHARGE
+    const canJump = mask[HEAD_OFFSETS[JUMP] + 1] === 1
+    if (grounded && soon && canJump) fix(JUMP, 1)
+    if (!grounded) fix(SPRINT, 0)
+    const ready = charge > CRIT_CHARGE
+    const strike = !grounded && obs[INPUT_FALL] > 0 && ready && aimed && obs[INPUT_SPRINT] < 0.5 && obs[INPUT_ENEMY_HURT] <= ENEMY_HURT_WINDOW
+    const leaving = ready && aimed && obs[INPUT_BODY_DISTANCE] * 4 >= CRIT_LEAVING
+    if (strike) fix(ATTACK, 1)
+    else if (soon && !leaving && (!grounded || canJump)) fix(ATTACK, 0)
   }
 
   act (a) {

@@ -82,6 +82,7 @@ async function main (cfg) {
     planRules: true,
     allowedWeapons: new Set(TRAINED_WEAPONS),
     rangeRules: true,
+    critRule: process.env.DEMO_CRIT_RULE === '1',
     gunForceRange: Number(process.env.DEMO_GUN_RANGE) || undefined
   })
   fighter.setFairHealth(!!info?.fair, 'player', false)
