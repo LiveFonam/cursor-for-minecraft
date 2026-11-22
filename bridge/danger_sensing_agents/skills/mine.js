@@ -17,6 +17,7 @@ const { goTo, walkOnly, walkOnlyMoves, dropDigMoves } = require('./move')
 const { digHazard } = require('../hazards')
 const { isMarkedOre } = require('./ore_marks')
 const { canFlow, findKnownOre, inPickupBox, pickupSpot, preAim } = require('./motion')
+const { WATER_NAMES, WATER_TURNS, digOnWet, getOutOfWater, isWater, stepOutToDig } = require('./water')
 const { bestPickaxeItem } = require('./gather_kinds')
 const { GoalPickup, pickUpDrops } = require('./pickup')
 
@@ -435,22 +436,24 @@ async function placeTorch (bot, ctx) {
 }
 
 const AIR = new Set(['air', 'cave_air', 'void_air'])
-const LIQUID = new Set(['lava', 'water', 'flowing_lava', 'flowing_water'])
+const LIQUID = new Set(['lava', 'flowing_lava', 'flowing_water', ...WATER_NAMES])
 const CARDINAL = [[0, -1], [1, 0], [0, 1], [-1, 0]]  // yaw 0 faces -z in Mineflayer
+const HOT = new Set(['lava', 'flowing_lava'])
 const FALLS = /^(gravel|sand|red_sand|suspicious_sand|suspicious_gravel)$|_concrete_powder$/
 
-// Lava or water in or next to a block it is about to open
-function liquidNear (bot, pos) {
+// Lava or water (or just the kinds asked for) in or next to a block it is about to open
+function liquidNear (bot, pos, kinds = LIQUID) {
   for (const [dx, dy, dz] of [[0, 0, 0], ...DIRS]) {
     const b = bot.blockAt(pos.offset(dx, dy, dz))
-    if (b && LIQUID.has(b.name)) return true
+    if (b && kinds.has(b.name)) return true
   }
   return false
 }
 
-async function clearBlock (bot, pos, token) {
+async function clearBlock (bot, pos, token, throughWater = false) {
   for (let i = 0; i < 6 && !token.cancelled; i++) {  // gravel and sand fall back in
     const b = bot.blockAt(pos)
+    if (throughWater && isWater(b)) return true
     // anything but air gets dug: snow layers, grass and flowers count as passable in the block data, and a snow
     // layer still held the bot up in the live test
     if (!b || AIR.has(b.name)) return true
@@ -481,16 +484,24 @@ async function exploreStep (bot, ctx, token) {
   const target = down ? ahead.offset(0, -1, 0) : ahead
   const open = down ? [ahead.offset(0, 1, 0), ahead, target] : [ahead.offset(0, 1, 0), ahead]
   const floor = bot.blockAt(target.offset(0, -1, 0))
-  const blocked = open.some(p => liquidNear(bot, p)) || !floor || floor.boundingBox !== 'block' || LIQUID.has(floor.name)
-  if (blocked) {
+  const wet = open.some(p => liquidNear(bot, p))
+  const unsafe = open.some(p => liquidNear(bot, p, HOT)) || !floor || floor.boundingBox !== 'block' || LIQUID.has(floor.name)
+  if (unsafe || (wet && !ctx.wetDig)) {
     ctx.heading += (Math.random() < 0.5 ? -1 : 1) * Math.PI / 2
     ctx.turns = (ctx.turns || 0) + 1
+    if (!unsafe) ctx.log?.(`${bot.username} water: turning the tunnel`)
+    if (!unsafe && ctx.turns >= WATER_TURNS) {  // less strict than lava: water all around is dug on through
+      digOnWet(bot, ctx)
+      ctx.turns = 0
+      return
+    }
     if (ctx.turns > 6) throw new Error('lava, water or a drop on every side')
     return
   }
   ctx.turns = 0
+  ctx.wetDig = wet ? ctx.wetDig - 1 : 0
   for (const p of open) {
-    if (!await clearBlock(bot, p, token)) {
+    if (!await clearBlock(bot, p, token, wet)) {
       ctx.heading += Math.PI / 2
       throw new Error(`could not dig ${bot.blockAt(p)?.name ?? 'a block'} ahead`)
     }
@@ -558,7 +569,7 @@ async function stepInto (bot, cell, token) {
 async function mineOne (bot, ctx, token) {
   const { ids, human } = ctx
   for (let explored = 0; explored <= MAX_EXPLORE && !token.cancelled; explored++) {
-    if (bot.entity.isInWater) await backOut(bot, ctx, token)
+    await getOutOfWater(bot, ctx, token, backOut)
     if (bot.inventory.emptySlotCount() === 0) return 'full'
     const targets = visibleTargets(bot, ids, human).filter(p => !ctx.skip.has(p.toString()))
     if (!targets.length) {
@@ -612,6 +623,7 @@ async function mineOne (bot, ctx, token) {
     await equipFor(bot, again)  // the walk may have dug with another tool
     if (token.cancelled) return 'cancelled'
     const known = itemIds(bot)
+    if (!ctx.wetDig) await stepOutToDig(bot, pos, token, ctx.log)
     await bot.dig(again, true)
     const spot = oweDrop(bot, ctx, pos.offset(0.5, 0.5, 0.5), known)
     await collectAround(bot, spot.at, token, { known, digFor: ctx.wantsDrop, dug: ctx.dugFor, enough: ctx.bagDone, log: ctx.log })

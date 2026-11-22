@@ -19,7 +19,7 @@ const { walkHome, walkToSpot } = require('../walk_home')
 const CONFIG = { host: '127.0.0.1', port: 25566, version: '1.21.11', owner: null, bots: ['Agent1'], fighter_run: 'weights/fighter' }
 const STAGE = { x: 10, y: -60, z: 20 }
 const S = { ...loadSettings({ DEMO_PLAYER: 'Viewer' }, CONFIG), stage: STAGE }
-const KIT = [['stone_axe', 1], ['shield', 1], ['bread', 6]]
+const KIT = [['stone_axe', 1], ['shield', 1], ['bread', 16]]
 const PICK = 'clear Viewer minecraft:diamond_pickaxe 0'
 const found = n => (n ? `Found ${n} matching item(s) on player Viewer` : 'No items were found on player Viewer')
 const tpTo = (name, p, yaw) => `tp ${name} ${p.x + 0.5} ${p.y} ${p.z + 0.5} ${yaw} 0`

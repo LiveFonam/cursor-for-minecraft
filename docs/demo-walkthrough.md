@@ -8,7 +8,7 @@ flowchart LR
     B --> C["The agent leaves through the iron door<br/>You stay and become a spectator"]
     C --> D["Wood, stone, food, mobs,<br/>iron, diamonds"]
     D --> E["The agent comes back<br/>and hands you the pickaxe"]
-    E --> F["!evil<br/>Waves of mobs until you end it"]
+    E --> F["!evil<br/>Night falls and the mobs break in"]
     F --> G["!1v1<br/>You against the axe fighter"]
 ```
 
@@ -19,9 +19,18 @@ If you pick this up in another session, this is the target:
 1. The evil god gets smarter plans. Code maps where mobs can really walk and tests each plan on that map. Claude Haiku chooses among the plans that passed and remembers what worked against this player.
 2. It can tell a base from a plain building or a dug-in hole. It looks for a respawn bed, chests and furnaces that have been used, blocks the player placed, time spent there and defenses. It rules out villages, temples and other structures the game generated.
 3. It can reach a player who dug into the ground. It finds the cheapest route through the ground, chains creeper blasts, and comes through nearby caves.
-4. Endermen can bridge a moat with real blocks from nearby, so zombies can cross and attack the base.
-5. Mining keeps away from water the way it already keeps away from lava.
-6. The small display in the corner of the screen becomes part of this repo. It shows the agent's health, food, distance from you, time gone on the job, ready and raw food, building blocks, tools with durability, and other items.
+4. The night siege in step 7 passes its tests in a simulated world and still needs a full run on a real server.
+
+## The corner display
+
+`bridge/danger_sensing_agents/demo/corner_display.js` keeps a small text file up to date with the agent's health, food, distance from the base, time gone on the job, model calls and cost, ready and raw food, building blocks, tools with durability, and other items. Point an on-screen overlay at that file.
+
+```sh
+DEMO_PLAYER=<your Minecraft name> \
+DEMO_HUD_FILE=<text file> \
+DEMO_JOB_LOG=<the demo's log> \
+node bridge/danger_sensing_agents/demo/corner_display.js
+```
 
 ## Start it
 
@@ -47,7 +56,7 @@ The agent starts with very little:
 
 - A stone axe
 - A shield
-- 6 bread
+- 16 bread
 - No armor
 
 ### 2. Ask for something in plain English
@@ -111,18 +120,20 @@ Plain `!reset` always empties the chest, so the agent does the whole job.
 !evil
 ```
 
-This uses the base you are already in. The door shuts, so a creeper blows a hole in a wall. Then 3 zombies come through it. Every zombie carries a wooden axe.
+This uses the base you are already in. The world turns to midnight and the agent leaves, so it is you against the mobs. To bring the agent back, type `!agent` or say `spawn the agent`.
 
-The hunt stays on, wave after wave, until a task, `!reset`, `!chest`, `!stop` or `!1v1` ends it:
+The evil god directs the mobs already near your base. It only summons one when a job has nobody to do it. Then it attacks once:
 
-- The first waves bring 3 zombies. One more joins every second wave, up to 6.
-- A creeper comes when you are in the base with every wall standing, and on every third wave.
-- At most 8 evil mobs are alive at once.
-- The next wave comes 15 seconds after you clear one. A wave still alive after 75 seconds gets topped up to that limit.
-- If you leave the base, the next wave lands around you.
-- If you die, the hunt waits for you to come back, then gives you 8 seconds with protection.
+1. It picks the wall with the driest route that zombies can reach, because water makes it hard for them to get in.
+2. A creeper blows a hole in that wall.
+3. An enderman moves nearby blocks to build a path across what is left, like the blast crater or a moat.
+4. Zombies with wooden axes and iron helmets follow that path to you.
 
-Claude Haiku picks each plan from a fixed menu: which wall, where along it, how the zombies attack, and a short taunt. It gets at most 3 calls per wave, 4 per minute, 40 per hour and 150 until the demo restarts. If the model fails, times out or has no key, the scripted plan runs.
+If no side can be reached, one creeper and 3 zombies make a simpler scripted attack. To attack again, type `!stop` or `!reset` first. A task, `!reset`, `!chest`, `!stop` or `!1v1` ends evil and brings the day back.
+
+To see the enderman's path, type `!moat` first. It digs a water moat around the base, and `!reset` removes it.
+
+Claude Haiku picks the plan from a fixed menu and writes a short taunt. It gets at most 4 calls per minute, 40 per hour and 150 until the demo restarts. If the model fails, times out or has no key, the scripted plan runs.
 
 ### 8. Fight it yourself
 
@@ -132,7 +143,7 @@ Claude Haiku picks each plan from a fixed menu: which wall, where along it, how 
 
 You and the trained axe fighter, shown as `FNNs` and its version, go to a yellow and black 20 by 20 arena in full diamond with an axe, sword, shield, crossbow and bow. Your crossbow starts loaded, and the fighter plays with 100 ms of ping. Both of you are in adventure mode, so nothing can be broken or placed.
 
-Every fight gets fresh cover: 1 or 2 pairs of solid gray pillars. Each pair is mirrored across the middle of the arena, so neither side is better, and stays away from both spawn spots. The pillars are gone when the fight ends.
+You start 16 blocks apart, with time to load a crossbow. The arena is open. Set `DEMO_PILLARS=1` to add 1 or 2 mirrored pairs of solid gray pillars to each fight. They are off by default because the fighter cannot see them yet.
 
 A 3, 2, 1 countdown on a boss bar holds both of you still. Then the fight starts, with HP under each name. It lasts up to 3 minutes, then you return to your base.
 
@@ -161,6 +172,8 @@ node bridge/danger_sensing_agents/demo/one_v_one.js
 
 Join `localhost:25570` when the log asks you to. The console uses port 25571. `ONE_V_ONE_PORT` and `ONE_V_ONE_CONSOLE_PORT` change them. The server only accepts connections from this machine, and everything it writes stays in `runs/one-v-one`, which git ignores. Press Ctrl-C to stop early. Only the server process this run started is stopped.
 
+Set `ONE_V_ONE_STAY=1` to keep the server up. A new match then follows each one, and if you leave, it waits for you to come back.
+
 ## The live neuron screen
 
 While a fight runs, in either version, open <http://127.0.0.1:8770>. The page keeps trying to reconnect between fights, so you can leave it open.
@@ -186,7 +199,9 @@ The fight never waits for the page. Set `DEMO_NEURONS_PORT` to use another port,
 | `use haste`, `mine faster` | Turns Haste on in plain words |
 | `!mob [zombie, skeleton, enderman, creeper]` | Sends a mob at the agent |
 | `!animal [cow, pig, sheep, chicken]` | Puts an animal next to the agent |
-| `!evil` | The evil god hunts you in waves until a task, `!reset`, `!chest`, `!stop` or `!1v1` |
+| `!evil` | Night falls and the mobs nearby attack your base, until a task, `!reset`, `!chest`, `!stop` or `!1v1` |
+| `!agent` or `spawn the agent` | Brings the agent back during `!evil` |
+| `!moat` | Digs a water moat around the base. `!reset` removes it |
 | `!1v1` | One fight against the trained axe fighter, then you return to the base |
 | `!stop` | Stops everything and brings you back to the base |
 | `!help` | Lists the commands |

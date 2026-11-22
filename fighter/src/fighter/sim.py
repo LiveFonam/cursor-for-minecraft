@@ -21,6 +21,7 @@ from . import items as IT
 from . import movement as M
 from .arrows import MAX_ARROWS
 from .perception import Perception
+from .pillars import Pillars
 
 EVENT_NAMES = (
     "damage_dealt",
@@ -47,10 +48,12 @@ SPAWN_SCAN_STEP = 48
 SPAWN_CORNER_INSET = 1e-4
 # Named fight conditions for training and testing. "standard" is the plain SimConfig. "diamond_20" is one full set of
 # unenchanted diamond armor, a diamond axe and sword, a shield, a crossbow, a bow and 6 arrows, in a 20 block wide arena.
+# "diamond_20_walls" is the same fight with fresh mirrored solid pillars every round.
 # "diamond_20_far" is the same fight started 15 to 17 blocks apart, with time to load the crossbow.
 FIGHT_SETUPS: dict[str, dict] = {
     "standard": {},
     "diamond_20": {"armor": "diamond", "arena_half": 10.0},
+    "diamond_20_walls": {"armor": "diamond", "arena_half": 10.0, "pillars": True},
     "diamond_20_far": {"armor": "diamond", "arena_half": 10.0, "spawn_min": 15.0, "spawn_max": 17.0},
 }
 
@@ -63,6 +66,7 @@ class SimConfig:
     client_model: the client that moves the bodies, shared with the world.
     decisions_per_second: 10, 15 or 20 policy decisions in each 20 game ticks.
     world_size: side length of the world in blocks, or None for the profile's size.
+    pillars: stand random mirrored solid pillars in the flat arena each round.
     """
 
     armor: str = "iron"
@@ -86,10 +90,13 @@ class SimConfig:
     world_seed: int = 0
     world_cache: str | None = None
     ready_gate: float = C.FULL_CHARGE_THRESHOLD
+    pillars: bool = False
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
             raise ValueError(f"unknown world profile {self.profile!r}, expected one of {PROFILES}")
+        if self.pillars and self.profile != "arena":
+            raise ValueError("pillars stand in the flat arena profile only")
         if self.decisions_per_second not in DECISION_RATES:
             raise ValueError(f"decisions_per_second must be one of {DECISION_RATES}")
         changes: dict[str, object] = {}
@@ -164,6 +171,8 @@ def bow_speed(draw_ticks: np.ndarray) -> np.ndarray:
 class Sim:
     """A batch of independent arenas with two players each."""
 
+    pillars: Pillars | None = None
+
     def __init__(
         self, n: int, config: SimConfig | None = None, seed: int = 0, profile: str | None = None
     ):
@@ -206,6 +215,7 @@ class Sim:
         self.items = IT.Items(self)
         self.perception = Perception(self)
         self.border_half = float(self.cfg.arena_half)
+        self.pillars = Pillars(n, self.cfg.arena_half) if self.cfg.pillars else None
         if self.cfg.kits is None:
             self.melee_only = self.cfg.start_arrows == 0
         else:
@@ -285,12 +295,17 @@ class Sim:
         center = self.rng.uniform(-room, room, size=(k, 2))
         distance = self.rng.uniform(cfg.spawn_min, cfg.spawn_max, size=k)
         angle = self.rng.uniform(0.0, 2.0 * np.pi, size=k)
+        if self.pillars is not None:
+            center[:, 0] = 0.0
+            angle[:] = 0.0
         offset = np.stack([np.cos(angle), np.sin(angle)], axis=-1) * (distance / 2.0)[:, None]
         for seat, sign in ((0, -1.0), (1, 1.0)):
             xz = center + sign * offset
             self.pos[idx, seat, 0] = xz[:, 0] + self.origin[0]
             self.pos[idx, seat, 1] = 0.0
             self.pos[idx, seat, 2] = xz[:, 1] + self.origin[2]
+        if self.pillars is not None:
+            self.pillars.place(self.rng, idx, distance / 2.0, center[:, 1])
         if self.world is not None:
             self._spawn_on_ground(idx, room, distance)
         delta = self.pos[idx, 1] - self.pos[idx, 0]
@@ -432,7 +447,11 @@ class Sim:
     def aim_hits(self, reach: float = C.ATTACK_REACH) -> np.ndarray:
         """Return which players' view rays meet the other hitbox within reach."""
         low, high = self.boxes()
-        return ray_box(self.eyes(), self.look(), low[:, ::-1], high[:, ::-1], reach)
+        eyes, look = self.eyes(), self.look()
+        hits = ray_box(eyes, look, low[:, ::-1], high[:, ::-1], reach)
+        if self.pillars is not None:
+            hits = hits & self.pillars.view_open(np.arange(self.n), eyes, look, low[:, ::-1], high[:, ::-1], reach)
+        return hits
 
     def attack_multiplier(self) -> np.ndarray:
         """Return the current melee damage multiplier of each player."""
@@ -459,6 +478,8 @@ class Sim:
             self._tick(actions, first=tick == 0)
         if self.world is not None:
             self.update_sight()
+        elif self.pillars is not None:
+            self.perception.refresh()
         self.perception.after_step(actions, count)
         return self.events
 

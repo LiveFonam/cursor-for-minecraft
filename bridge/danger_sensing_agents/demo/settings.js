@@ -16,6 +16,7 @@
 //   DEMO_STAGE           x,y,z of the scene, feet level (default: where the agent stands when the demo starts)
 //   DEMO_METRICS         the demo's job log. Every death goes to deaths.jsonl beside it (default runs/demo/metrics.jsonl)
 //   DEMO_FIGHT_SECONDS   longest 1v1 (default 180)
+//   DEMO_PILLARS         1 puts random pillars in the 1v1 arena. Off by default, because the fighter's client cannot see them
 //   DEMO_CUE_MOB         seconds into a task before a mob is sent at the agent, 0 for never (default 60)
 //   DEMO_CUE_ANIMAL      seconds into a task before an animal appears by the agent, 0 for never (default 120)
 
@@ -28,13 +29,6 @@ const SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..')
 
 // Every limit of the always-on evil mode
 const EVIL_LIMITS = Object.freeze({
-  maxAlive: 8,          // evil mobs alive at once, never more
-  startZombies: 3,      // zombies in the first waves, one more every second wave
-  maxZombies: 6,        // zombies in the biggest wave
-  waveGapMs: 15000,     // the pause after a wave is cleared
-  waveMaxMs: 75000,     // a wave still alive after this is topped up to the cap
-  graceMs: 8000,        // after a respawn, before the hunt goes on
-  pollMs: 2500,         // how often the hunt looks at the world
   modelPerMinute: 4,    // model calls in any one minute
   modelPerHour: 40,     // model calls in any one hour
   modelPerRun: 150      // model calls until the demo is restarted
@@ -80,6 +74,7 @@ function loadSettings (env = process.env, config = loadConfig({ env, ownerRequir
     metrics: path.resolve(SOURCE_ROOT, env.DEMO_METRICS || path.join('runs', 'demo', 'metrics.jsonl')),
     neuronsPort: wholeNumber(env, 'DEMO_NEURONS_PORT', 8770),
     fightSeconds: wholeNumber(env, 'DEMO_FIGHT_SECONDS', 180),
+    pillars: env.DEMO_PILLARS === '1',
     cueMobSeconds: wholeNumber(env, 'DEMO_CUE_MOB', 60),
     cueAnimalSeconds: wholeNumber(env, 'DEMO_CUE_ANIMAL', 120),
     host: config.host,

@@ -98,7 +98,11 @@ class DemoAgents extends Agents {
   // Back at the base, the player is brought to his spot, and the hand step starts once the agent can see him
   async walkHome (ctx, command) {
     const stage = this.controller.stage
-    const r = await this.walkToBase(ctx, scene.spots(stage).hand, token => passDoor(ctx, stage, 'in', token))
+    const enter = token => passDoor(ctx, stage, 'in', token)
+    enter.approach = scene.baseLayout(stage).door.outside
+    let r = await this.walkToBase(ctx, scene.spots(stage).hand, enter)
+    // the finished item must reach him: a way back that truly failed ends with the agent put at the base
+    if ((r === 'shut' || r === 'far') && await this.bringHome(ctx, stage)) r = 'done'
     if (r === 'shut') {
       this.say(ctx.bot, `I can't get through the door, ${command.args.to}`)
       return 'far'
@@ -114,6 +118,20 @@ class DemoAgents extends Agents {
       await new Promise(resolve => setTimeout(resolve, this.seeWaitMs))
     }
     return 'far'
+  }
+
+  async bringHome (ctx, stage) {
+    if (!this.rcon) return false
+    const at = scene.spots(stage).hand
+    try {
+      await this.rcon.send(`tp ${ctx.bot.username} ${at.x + 0.5} ${at.y} ${at.z + 0.5}`)
+    } catch {
+      return false
+    }
+    log(`${ctx.bot.username} could not walk back, moved to the base`)
+    this.say(ctx.bot, "I couldn't find the way back, so I came straight home")
+    await new Promise(resolve => setTimeout(resolve, this.seeWaitMs))
+    return true
   }
 
   walkToBase (ctx, at, door = null) {

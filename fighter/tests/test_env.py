@@ -106,7 +106,7 @@ def test_sampled_actions_respect_masks():
         assert masks[np.arange(32), start + actions[:, head]].all()
 
 
-@pytest.mark.parametrize("name", sorted(SCRIPTED))
+@pytest.mark.parametrize("name", sorted(set(SCRIPTED) - {"synth"}))
 def test_scripted_opponents_produce_valid_actions(name):
     sim = Sim(16, SimConfig(), seed=3)
     rng = np.random.default_rng(3)

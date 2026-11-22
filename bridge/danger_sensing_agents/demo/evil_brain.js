@@ -3,7 +3,7 @@
 // The key is loaded the way the translator loads it and is never printed or logged.
 
 const { loadCredentials, makeClient, apiErrorText, noteUsage } = require('../translator')
-const { FALLBACK_PLAN, checkPlan, checkMove } = require('./evil_plan')
+const { FALLBACK_PLAN, checkPlan, checkMove, checkSide } = require('./evil_plan')
 const { EVIL_LIMITS } = require('./settings')
 
 const MODEL = 'claude-haiku-5-5'
@@ -35,17 +35,16 @@ const ADAPT = [
   'press keeps the plan. regroup brings the zombies together at the hole. flank sends one zombie around to the far wall.'
 ].join('\n')
 
-const WAVE = [
-  'You are the evil god in a Minecraft demo, hunting one player wave after wave. A script spawns the mobs and moves them. You only choose from a fixed menu.',
-  'In the situation, dx and dz are blocks east and south of the base center. hunt says which wave this is, which walls stand, how the last wave went and how many mobs are coming.',
-  'If the player has left the base the mobs land around the player, and wall only sets the side they come from.',
-  'The line is one short villain taunt for chat: at most 80 characters, plain words and basic punctuation.',
+const SIEGE = [
+  'You are the evil god in a Minecraft demo, directing the mobs already near a small cobblestone base during one night siege. A script commands them and carries out every move. You only choose from a menu.',
+  'A creeper blows the wall you pick, an enderman carries real ground to make a path across whatever is left, and the zombies walk that path to the player.',
+  'In the situation, dx and dz are blocks east and south of the base center. siege.sides lists the only walls the code has checked: water is how much water is near that side (it slows zombies, so lower is better), and blocks is how many blocks the enderman must carry.',
+  'The line is one short villain taunt for chat about the side you chose: at most 80 characters, plain words and basic punctuation.',
   'Reply with exactly one JSON object and nothing else.',
-  'Form: {"wall":"north|east|west","approach":"left|center|right","zombies":"breach|flank|wait_rush","line":"..."}',
-  'wall: the side to attack from, best where a wall is already gone. approach: where along it. zombies: breach comes together, flank sends one around the far side, wait_rush holds them for a few seconds.'
+  'Form: {"side":"one of the sides in siege.sides","approach":"left|center|right","line":"..."}'
 ].join('\n')
 
-// The bill's hard stop, across every wave and every time evil mode is turned on, until the demo restarts
+// The bill's hard stop, across every attack and every time evil mode is turned on, until the demo restarts
 class CallBudget {
   constructor ({ perMinute, perHour, perRun }, now = Date.now) {
     Object.assign(this, { perMinute, perHour, perRun, now })
@@ -154,9 +153,9 @@ class Invasion {
     return { ...FALLBACK_PLAN }
   }
 
-  // A later wave of the hunt: its plan, or null to keep the scripted side
-  wave (situation) {
-    return this.ask('wave', WAVE, situation, checkPlan, p => `${p.wall} ${p.approach} ${p.zombies}`)
+  // The night attack's side, from the ones the code has checked, or null to keep the code's own pick
+  siege (situation, sides) {
+    return this.ask('siege', SIEGE, situation, t => checkSide(t, sides), p => `${p.wall} ${p.approach}`)
   }
 
   // A change of plan, or null to carry on as planned

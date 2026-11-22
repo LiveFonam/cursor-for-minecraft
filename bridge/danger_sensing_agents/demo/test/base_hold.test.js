@@ -5,7 +5,7 @@ const scene = require('../scene')
 const plans = require('../evil_plan')
 
 const STAGE = { x: 100, y: 64, z: 200 }
-const AXE = 'equipment:{mainhand:{id:"minecraft:wooden_axe",count:1}},drop_chances:{mainhand:0.0f}'
+const AXE = 'equipment:{mainhand:{id:"minecraft:wooden_axe",count:1},head:{id:"minecraft:iron_helmet",count:1}},drop_chances:{mainhand:0.0f,head:0.0f}'
 const zombies = lines => lines.filter(l => l.startsWith('summon minecraft:zombie'))
 
 test('the scripted raid has 3 zombies with wooden axes', () => {

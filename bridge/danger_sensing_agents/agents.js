@@ -1024,4 +1024,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { Agents, Builds }
+module.exports = { Agents, Builds, agentsRconSettings }

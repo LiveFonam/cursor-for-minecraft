@@ -330,7 +330,8 @@ async function main (env = process.env) {
   }
   const settings = {
     ...loadSettings({ ...env, AGENTS_HOST: '127.0.0.1', AGENTS_PORT: String(opts.gamePort), AGENTS_RCON_PORT: String(opts.consolePort) }),
-    stage: STAGE
+    stage: STAGE,
+    pillars: env.DEMO_PILLARS !== '0'
   }
   const missing = missingFighterFiles(settings)
   if (missing.length) {

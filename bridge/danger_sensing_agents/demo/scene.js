@@ -10,6 +10,8 @@ const TAG_EVIL = 'demo_evil'
 const TAG_EVIL_CREEPER = 'demo_evil_creeper'
 const TAG_FORCED = 'demo_forced'
 const TAG_BODY = 'demo_body'
+const TAG_EVIL_BRIDGE = 'demo_evil_bridge'
+const TAG_MOAT = 'demo_moat'
 const DEATHS = 'demo_deaths'
 
 const ARENA_Y = 100
@@ -17,7 +19,7 @@ const ARENA_HALF = 10
 const ARENA_EAST = 200
 const ARENA_TILE = 4             // 5 by 5 floor squares
 const ARENA_TILES = ['yellow_concrete', 'black_concrete']
-const FIGHT_START = 5
+const FIGHT_START = 8           // 16 blocks apart, with time to load the crossbow
 const BASE_WEST = 16
 const BASE_HALF = 4
 const WALL_HEIGHT = 3
@@ -29,6 +31,9 @@ const PILLAR_SIZES = Object.freeze([[1, 2], [2, 1], [1, 3], [3, 1], [2, 2]])
 const PILLAR_FROM_EDGE = 2      // room to walk between a pillar and the arena wall
 const PILLAR_FROM_SPAWN = 3     // open blocks kept on every side of a spawn spot
 const PILLAR_GAP = 2            // open blocks between two pillars, so nobody gets wedged
+const MOAT_IN = BASE_HALF + 4   // the moat's inner edge, past the strip a base rebuild touches
+const MOAT_OUT = MOAT_IN + 1    // two wide
+const MOAT_BANK = MOAT_OUT + 3  // the flat outer bank
 
 // What !chest puts in the base chest: a diamond pickaxe's diamonds and sticks, and the planks for a crafting table
 const CHEST_STOCK = Object.freeze([['diamond', 3], ['stick', 2], ['oak_planks', 4]])
@@ -82,7 +87,7 @@ function agentKitCommands (name) {
     `effect clear ${name}`,
     `item replace entity ${name} hotbar.0 with stone_axe`,
     `item replace entity ${name} weapon.offhand with shield`,
-    `item replace entity ${name} hotbar.8 with bread 6`,
+    `item replace entity ${name} hotbar.8 with bread 16`,
     `effect give ${name} instant_health 1 3 true`,
     `effect give ${name} saturation 1 20 true`
   ]
@@ -106,6 +111,7 @@ function resetCommands (settings, stage, { stocked = false } = {}) {
     `kill @e[tag=${TAG_FORCED}]`,
     REMOVE_BODY,
     ...KEEP_HOSTILE.map(n => `kill @e[type=minecraft:${n},${near}]`),
+    ...moatClearCommands(stage),
     ...baseCommands(stage),
     ...(stocked ? stockCommands(stage) : []),
     `kill @e[type=minecraft:item,${near}]`,
@@ -117,6 +123,55 @@ function resetCommands (settings, stage, { stocked = false } = {}) {
     `gamemode creative ${settings.player}`,
     `tp ${settings.player} ${middleOf(p.player)} -90 0`
   ]
+}
+
+// The four strips that make a square ring, from ring a to ring b around c
+function ringBoxes (c, a, b) {
+  return [
+    [c.x - b, c.z - b, c.x + b, c.z - a],
+    [c.x - b, c.z + a, c.x + b, c.z + b],
+    [c.x - b, c.z - a + 1, c.x - a, c.z + a - 1],
+    [c.x + a, c.z - a + 1, c.x + b, c.z + a - 1]
+  ]
+}
+const fillRing = (boxes, y1, y2, block, how = '') => boxes.map(([a, b, d, e]) => `fill ${a} ${y1} ${b} ${d} ${y2} ${e} ${block}${how}`)
+
+// A moat two deep and two wide all the way around, lined so the water stays put. The marker is how a later reset knows
+function moatCommands (stage) {
+  const c = baseOf(stage)
+  const y = c.y
+  const wet = ringBoxes(c, MOAT_IN, MOAT_OUT)
+  const bank = ringBoxes(c, MOAT_OUT + 1, MOAT_BANK)
+  return [
+    `kill @e[tag=${TAG_MOAT}]`,
+    ...fillRing(ringBoxes(c, MOAT_IN, MOAT_BANK), y, y + CLEAR_HEIGHT, 'air'),
+    ...fillRing(ringBoxes(c, MOAT_IN - 1, MOAT_IN - 1), y - 3, y - 1, 'dirt', ' replace air'),
+    ...fillRing(bank, y - 3, y - 2, 'dirt', ' replace air'),
+    ...fillRing(bank, y - 1, y - 1, 'grass_block', ' replace air'),
+    ...fillRing(wet, y - 3, y - 3, 'dirt'),
+    ...fillRing(wet, y - 2, y - 1, 'water'),
+    `summon minecraft:marker ${c.x} ${y} ${c.z} {Tags:["${TAG_MOAT}"]}`
+  ]
+}
+
+// Only where !moat dug: the water goes, the ground comes back, and any hole in the bank is filled
+function moatClearCommands (stage) {
+  const c = baseOf(stage)
+  const y = c.y
+  const only = l => `execute if entity @e[tag=${TAG_MOAT}] run ${l}`
+  const wet = ringBoxes(c, MOAT_IN, MOAT_OUT)
+  return [
+    ...fillRing(wet, y - 3, y - 2, 'dirt').map(only),
+    ...fillRing(wet, y - 1, y - 1, 'grass_block').map(only),
+    ...fillRing(ringBoxes(c, MOAT_OUT + 1, MOAT_BANK), y - 1, y - 1, 'grass_block', ' replace air').map(only),
+    `kill @e[tag=${TAG_MOAT}]`
+  ]
+}
+
+function moatChunks (stage) {
+  const { x, z } = baseOf(stage)
+  const r = MOAT_BANK + 1
+  return `${x - r} ${z - r} ${x + r} ${z + r}`
 }
 
 // His body, left standing where he was while he spectates. A display entity, not a login: nothing hurts or pushes it
@@ -209,8 +264,8 @@ function baseCommands (stage) {
   ]
 }
 
-// The demo's zombies carry a wooden axe, which they keep when they die
-const ZOMBIE_GEAR = ',equipment:{mainhand:{id:"minecraft:wooden_axe",count:1}},drop_chances:{mainhand:0.0f}'
+// The demo's zombies carry a wooden axe and wear a helmet so the sun does not burn them. They drop neither
+const ZOMBIE_GEAR = ',equipment:{mainhand:{id:"minecraft:wooden_axe",count:1},head:{id:"minecraft:iron_helmet",count:1}},drop_chances:{mainhand:0.0f,head:0.0f}'
 
 function summonCommand (kind, p, tags) {
   const list = tags.map(t => `"${t}"`).join(',')
@@ -396,6 +451,7 @@ const parseHealth = reply => {
 }
 
 module.exports = {
+  TAG_EVIL_BRIDGE, TAG_MOAT, MOAT_IN, MOAT_OUT, MOAT_BANK, moatCommands, moatClearCommands, moatChunks,
   TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands, doorCommands,
   WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT, PLAYER_KIT,
   hostileToRemove, purgeCommands, spots, at, baseOf, arenaOf, agentKitCommands, resetCommands, baseCommands,

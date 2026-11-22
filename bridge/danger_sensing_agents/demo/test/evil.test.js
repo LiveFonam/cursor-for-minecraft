@@ -381,11 +381,6 @@ test('every command the menu can send fits the game\'s command tree', () => {
         const p = { wall, approach, zombies }
         for (const l of [...plan.creeperCommands(STAGE, p), ...plan.zombieCommands(STAGE, p), ...plan.igniteCommands(STAGE, p)]) lines.add(l)
         for (const m of plan.MOVES) for (const l of plan.moveCommands(STAGE, p, m)) lines.add(l)
-        for (const away of [false, true]) {
-          const w = plan.waveCommands(STAGE, p, { player: { x: 100, y: 64, z: 100 }, away, creeper: 1, zombies: 6 })
-          for (const l of [...w.creeper, ...w.zombies]) lines.add(l)
-        }
-        lines.add(plan.regatherCommand('Viewer', { x: 100, y: 64, z: 100 }, wall))
       }
     }
   }

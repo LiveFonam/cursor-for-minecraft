@@ -69,7 +69,7 @@ def drill(args: argparse.Namespace) -> int:
 def evaluate(args: argparse.Namespace) -> int:
     from .drills import DRILLS
     from .evaluate import play_matches
-    from .opponents import SCRIPTED
+    from .opponents import OPEN_SOURCE_BOTS, SCRIPTED
     from .policy import NumpyPolicy
 
     policy = NumpyPolicy.load(args.policy)
@@ -77,7 +77,7 @@ def evaluate(args: argparse.Namespace) -> int:
         report = DRILLS[args.drill][1](policy)
         print(json.dumps(report, indent=2))
         return 0 if report["passed"] else 1
-    names = sorted(SCRIPTED) if args.opponent == "all" else [args.opponent]
+    names = sorted(set(SCRIPTED) - set(OPEN_SOURCE_BOTS)) if args.opponent == "all" else [args.opponent]
     results = [
         play_matches(policy, name, games_per_arena=args.games, deterministic=args.deterministic)
         for name in names

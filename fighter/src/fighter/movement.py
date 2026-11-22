@@ -26,6 +26,7 @@ SNEAK_EYE = 1.27
 SNEAK_INPUT = C.SNEAK_MULTIPLIER
 ITEM_USE_INPUT = 0.2
 STEP_HEIGHT = 0.6
+PILLAR_CONTACT = 1e-9
 JUMP_COOLDOWN = 10
 TINY_VELOCITY = 0.003
 TINY_HORIZONTAL_SQ = 9.0e-6
@@ -496,6 +497,8 @@ def _wall_stop(
 
 def _move_flat(sim, input_x: np.ndarray, input_z: np.ndarray) -> np.ndarray:
     """Move over the flat arena plane and return the vertical move."""
+    if sim.pillars is not None:
+        return _move_walled(sim, input_x, input_z)
     pos = sim.pos
     vel = sim.vel
     body = sim.body
@@ -527,6 +530,46 @@ def _move_flat(sim, input_x: np.ndarray, input_z: np.ndarray) -> np.ndarray:
         vel[..., 0] = np.where(over_x, 0.0, vel[..., 0])
         vel[..., 2] = np.where(over_z, 0.0, vel[..., 2])
         _wall_stop(sim, over_x | over_z, moved_x, moved_z, input_x, input_z)
+    elif body.wall_block.any():
+        body.wall_block = np.zeros_like(body.wall_block)
+    return pos[..., 1] - old_y
+
+
+def _move_walled(sim, input_x: np.ndarray, input_z: np.ndarray) -> np.ndarray:
+    """Move over the flat arena with its pillars and return the vertical move."""
+    pos = sim.pos
+    vel = sim.vel
+    body = sim.body
+    old_y = pos[..., 1].copy()
+    moved = sim.pillars.collide(pos, vel, body.heights())
+    hit = np.abs(moved - vel) > PILLAR_CONTACT
+    stood = hit[..., 1] & (vel[..., 1] < 0.0)
+    pos += moved
+    landed = ((pos[..., 1] <= 0.0) & (vel[..., 1] <= 0.0)) | stood
+    pos[..., 1] = np.maximum(pos[..., 1], 0.0)
+    vel[..., 1] = np.where(landed | hit[..., 1], 0.0, vel[..., 1])
+    vel[..., 0] = np.where(hit[..., 0], 0.0, vel[..., 0])
+    vel[..., 2] = np.where(hit[..., 2], 0.0, vel[..., 2])
+    sim.on_ground = landed
+
+    ceiling = body.cfg.ceiling
+    if ceiling is not None:
+        top = ceiling - body.heights()
+        bumped = pos[..., 1] > top
+        if bumped.any():
+            pos[..., 1] = np.where(bumped, top, pos[..., 1])
+            vel[..., 1] = np.where(bumped & (vel[..., 1] > 0.0), 0.0, vel[..., 1])
+
+    limit = sim.cfg.arena_half - C.PLAYER_WIDTH / 2.0
+    over_x = np.abs(pos[..., 0]) > limit
+    over_z = np.abs(pos[..., 2]) > limit
+    pos[..., 0] = np.minimum(np.maximum(pos[..., 0], -limit), limit)
+    pos[..., 2] = np.minimum(np.maximum(pos[..., 2], -limit), limit)
+    vel[..., 0] = np.where(over_x, 0.0, vel[..., 0])
+    vel[..., 2] = np.where(over_z, 0.0, vel[..., 2])
+    blocked = hit[..., 0] | hit[..., 2] | over_x | over_z
+    if blocked.any():
+        _wall_stop(sim, blocked, pos[..., 0] - body._before[..., 0], pos[..., 2] - body._before[..., 2], input_x, input_z)
     elif body.wall_block.any():
         body.wall_block = np.zeros_like(body.wall_block)
     return pos[..., 1] - old_y
