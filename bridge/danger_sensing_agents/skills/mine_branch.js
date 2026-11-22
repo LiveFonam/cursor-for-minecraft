@@ -22,6 +22,7 @@ const { Vec3 } = require('vec3')
 const { goals } = require('mineflayer-pathfinder')
 const { sleep } = require('./human')
 const { goTo, walkTo, rescueMoves } = require('./move')
+const { digHazard } = require('../hazards')
 const { findContainers, storeAtHome } = require('./storage')
 const { pickTool, equipFor, collectAround, stepInto, backOut, MineError, SEE_RADIUS, REACH, AIR, TORCH_EVERY, torchGapFor, countTunnel, torchPlaced, itemIds, dropFilter, bagShort } = require('./mine')
 const { canFlow, clearLine, preAim, preAimNext, seesBlock, walkCells } = require('./motion')
@@ -51,7 +52,8 @@ const SURFACE = /(_log|_stem|_leaves)$|^(sand|red_sand|gravel|dirt|grass_block|c
 const TUNING = {
   branchGap: 3,     // a branch every 3 blocks of main tunnel, 2 solid blocks between branches
   branchLen: 12,    // blocks per branch
-  mainLen: 60       // then the main tunnel turns
+  mainLen: 60,      // then the main tunnel turns
+  caveMs: 20000     // time for caves since the last ore, then it digs from where it stands
 }
 const MAX_STEPS = 500       // tunnel and cave moves without ore before it gives up
 const MAX_WANDERS = 25      // surface walks of about 18 blocks without the block it wants
@@ -62,7 +64,8 @@ const MAX_DIG_MS = 8000     // blocks slower than this with its best tool are le
 const FALL_TICKS = 16       // long enough for gravel to drop a block or two and land
 const HOME_STEP = 6         // waypoints along its own path on the way home
 const CAVE_MIN_CELLS = 6
-const CAVE_DRY_LIMIT = 25   // cave moves without ore before it sticks to branch mining
+const CAVE_DRY_LIMIT = 3    // cave moves without ore before it sticks to branch mining
+const CAVE_NEAR = 10        // a cave further off than this is not "right there", it digs instead
 const FAR_FROM_FACE = 16    // further than this from its tunnel: back along its path before the next move
 
 const LAVA = new Set(['lava'])
@@ -209,6 +212,7 @@ async function openColumn (bot, ctx, cells, token) {
     if (!shut) {
       const above = bot.blockAt(cells[0].offset(0, 1, 0))
       if (!isFalling(above)) return true
+      if (digHazard(bot, above)) return false
       await digOne(bot, ctx, above)
       ctx.ownCells.add(key(above.position))
       await waitFall(bot, cells[0])
@@ -216,6 +220,7 @@ async function openColumn (bot, ctx, cells, token) {
     }
     const b = bot.blockAt(shut)
     if (!b || LAVA.has(b.name) || WATER.has(b.name) || !b.diggable || NEVER_DIG.test(b.name)) return false
+    if (digHazard(bot, b)) return false  // the same answer the dig guard would give, as a wall to turn at
     const fallingAbove = isFalling(bot.blockAt(shut.offset(0, 1, 0)))
     await digOne(bot, ctx, b)
     ctx.ownCells.add(key(shut))
@@ -627,8 +632,13 @@ function markVisited (ctx, p) {
 
 // One cave move: to the farthest standing spot of a cave it can see and has not been to. False with no cave in sight
 async function caveStep (bot, ctx, token) {
+  if (ctx.caveSince && Date.now() - ctx.caveSince >= ctx.tuning.caveMs) {
+    ctx.caveOff = true
+    ctx.say?.(`No ${ctx.label} in these caves, branch mining instead`)
+    return false
+  }
   markVisited(ctx, feetCell(bot))
-  const cells = lookForCave(bot, ctx)
+  const cells = lookForCave(bot, ctx, CAVE_NEAR)
   if (cells.length < CAVE_MIN_CELLS) return false
   const spots = cells
     .filter(c => c.t >= 3 && !ctx.visited.has(region(c.p)) && standable(bot, c.p) && !liquidAround(bot, c.p, LAVA))
@@ -641,8 +651,9 @@ async function caveStep (bot, ctx, token) {
   }
   const from = feetCell(bot)
   ctx.stats.mode = 'cave'
+  ctx.caveSince = ctx.caveSince || Date.now()
   try {
-    await goTo(bot, new goals.GoalNear(spot.x, spot.y, spot.z, 1), token, 20000)
+    await goTo(bot, new goals.GoalNear(spot.x, spot.y, spot.z, 1), token, 10000)
   } catch (err) {
     ctx.stats.pathFails++
     markVisited(ctx, spot)
@@ -746,6 +757,10 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
   }
   const again = bot.blockAt(pos)
   if (!again || !ids.includes(again.type)) return 'skip'
+  if (digHazard(bot, again)) {
+    ctx.skip.add(key(pos))
+    return 'skip'
+  }
   await equipFor(bot, again)
   if (token.cancelled) return 'cancelled'
   const fallingAbove = isFalling(bot.blockAt(pos.offset(0, 1, 0)))
@@ -1172,6 +1187,7 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
           job.stats.ores++
           ctx.steps = 0
           ctx.caveDry = 0
+          ctx.caveSince = 0  // a cave that gave ore has earned more time
           ctx.onMined?.(job)
         }
         continue

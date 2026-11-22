@@ -44,8 +44,20 @@ const SCENES = {
   }
 }
 
+// The a12 pocket: five touching ores and nothing else to mine, with two drops resting on the solid floor of their holes
+const POCKETS = {
+  a12: {
+    stand: [76, 10, 43],
+    tunnel: [[76, 10, 46], [76, 10, 45], [76, 10, 44], [76, 10, 43]],
+    ores: [[77, 11, 42], [77, 11, 43], [78, 11, 42], [78, 11, 43], [78, 10, 43]],
+    far: [78, 11, 42],
+    rest: [78.20, 11.00, 42.43],
+    falls: { '78,11,43': [78.62, 11.00, 43.15] }
+  }
+}
+
 function scene (name, { lose = () => false, dropLag = 3, extra = null } = {}) {
-  const s = SCENES[name]
+  const s = SCENES[name] || POCKETS[name]
   const world = new FakeWorld({ groundY: 62 })
   for (const c of s.tunnel) {
     world.set(v(c), 'air')
@@ -295,4 +307,57 @@ test('the owner drops the items while the bot is still walking over: it stops th
   assert.equal(r, 'done')
   assert.equal(h.bot.countOf('iron_ingot'), 3)
   assert.equal(h.bot.countOf('stick'), 2)
+})
+
+test('live failure a12: with no spare ore, every drop of the pocket ends up in the bag', async () => {
+  const { h } = scene('a12')
+  await settle(h)
+  const lines = []
+  const r = await h.drive(gatherKind(h.bot, 'iron', 5, { cancelled: false }, { human, log: l => lines.push(l), tuning: { branchLen: 0 } }), 6000)
+  assert.equal(h.bot.countOf('raw_iron'), 5, `${r.result}: ${r.message}\n${lines.join('\n')}`)
+  assert.equal(r.result, 'done', r.message)
+})
+
+const pocketDrop = (h, s, id = 60) => {
+  h.bot.entities[id] = { id, name: 'item', position: v(s.rest), drop: 'raw_iron', readyAt: 0, getDroppedItem: () => ({ name: 'raw_iron', count: 1 }) }
+}
+
+test('a drop passed over while the next dig was coming is still fetched once the chain is over', async () => {
+  const { h, world, s } = scene('base')
+  for (const o of s.ores) world.set(v(o), 'air')
+  await settle(h)
+  pocketDrop(h, s)
+  const centre = v(s.far).offset(0.5, 0.5, 0.5)
+  const dug = new Set()
+  await h.drive(walkOntoDrops(h.bot, centre, { cancelled: false }, { digNext: true, digFor: () => true, dug }), 200)
+  assert.equal(h.bot.countOf('raw_iron'), 0)
+  assert.equal(h.digs.finished, 0, 'nothing opened while the next dig was coming')
+  await h.drive(walkOntoDrops(h.bot, centre, { cancelled: false }, { settled: true, digFor: () => true, dug }), 400)
+  assert.equal(h.bot.countOf('raw_iron'), 1)
+})
+
+test('a drop it could not dig to says why on its log line, and a later look says it already tried', async () => {
+  const world = new FakeWorld({ groundY: 62 })
+  const s = SCENES.base
+  for (const c of s.tunnel) {
+    world.set(v(c), 'air')
+    world.set(v(c).offset(0, 1, 0), 'air')
+  }
+  world.fill3(new Vec3(92, 15, 48), new Vec3(95, 19, 51), 'bedrock')
+  world.set(v(s.far), 'air')
+  const h = makePhysicsBot({ world, realSight: true, pos: v(s.stand).offset(0.5, 0, 0.5) })
+  h.moves.canDig = true
+  guardHazards(h.bot, h.moves)
+  installMotion(h.bot)
+  h.bot.give('stone_pickaxe', 1)
+  await settle(h)
+  pocketDrop(h, s)
+  const lines = []
+  const dug = new Set()
+  const look = () => h.drive(walkOntoDrops(h.bot, v(s.far).offset(0.5, 0.5, 0.5), { cancelled: false }, { settled: true, digFor: () => true, dug, log: m => lines.push(m) }), 300)
+  await look()
+  await look()
+  assert.equal(lines.length, 2, lines.join(' | '))
+  assert.match(lines[0], /left a drop behind \(no way to it\): raw_iron at .*, dig: path \w+/)
+  assert.match(lines[1], /, dig: already tried/)
 })

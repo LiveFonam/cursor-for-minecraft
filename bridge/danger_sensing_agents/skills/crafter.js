@@ -446,7 +446,7 @@ async function takeBack (bot, job, token, hooks) {
     .filter(e => e.name === 'item' && e.position && droppedName(e) === job.item && e.position.distanceTo(me) <= TAKE_BACK_RANGE)
     .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0]
   if (drop) {
-    try { await goTo(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5), token, 8000) } catch {}
+    try { await goTo(bot, new (require('./pickup').GoalPickup)(drop.position), token, 8000) } catch {}
     await sleep(600)
     await resync(bot)
   }
@@ -585,6 +585,11 @@ async function runCraftJob (bot, job, token, hooks = {}) {
   }
   if (!job.made) throw bagError || new Error(`the crafts ran but I have no ${LABEL[job.item] || job.item}`)
   if (!job.madeLogged) { job.madeLogged = true; hooks.onMade?.(job) }
+  // the furnace is still out and the job is made: its raw food goes in before it walks away
+  if (job.furnace && !job.cookedHere) {
+    job.cookedHere = true
+    await require('./cook').cookAtFurnace(bot, job, token, log)
+  }
   // a crafting table it placed itself goes back in the bag (4 planks it may need next time)
   if (job.item !== 'crafting_table' && job.tableOurs) { try { await pickUpTable(bot, job, token) } catch (err) { log(`${bot.username} table pickup: ${err.message}`) } }
 

@@ -48,6 +48,8 @@ const CLIMB_LOOK = 96         // blocks it looks up for the top of the ground ab
 const DIG_SEARCH_MS = 60000
 const DIG_SEARCH_MAX_MS = 180000
 const DIG_SIGHT = 20          // an animal this close is worth walking to while it is looking for food
+const ROAM_RING = 144         // a walk for food with no emergency stays within this many blocks of where it began
+const ROAM_LOGS = 16          // it stops taking wood on that walk once it carries this many logs
 
 const horizontal = (a, b) => Math.hypot(a.x - b.x, a.z - b.z)
 const legMs = d => Math.max(15000, Math.min(60000, Math.round(d * 1000)))
@@ -83,8 +85,9 @@ function searchMoves (bot, base) {
 // The next ring out from where the search started, as waypoints from explore.js's spiral (only its outer ring, the
 // inner ones were covered by the last ring). Past MAX_RING it starts over around where it stands, so it never runs out
 function nextRing (bot, job) {
-  if (job.ring >= MAX_RING) {
-    job.center = bot.entity.position.clone()
+  if (job.ring >= (job.maxRing ?? MAX_RING)) {
+    // anchored: a walk with no emergency behind it circles the same area again and never drifts off
+    if (!job.anchored) job.center = bot.entity.position.clone()
     job.ring = 0
   }
   job.ring += RING_STEP
@@ -176,7 +179,8 @@ async function searchLeg (bot, job, token, hooks) {
     return
   }
   hooks.useMoves('search')
-  const sees = () => animalsNear(bot, SIGHT, { sight: true }).length > 0
+  // only an animal it would go for ends the leg, or one further off would stop it again every half second
+  const sees = () => animalsNear(bot, hooks.sight ?? SIGHT, { sight: true }).length > 0
   try {
     const d = horizontal(bot.entity.position, wp)
     const spotted = await walkWatching(bot, new goals.GoalNearXZ(wp.x, wp.z, 3), token, legMs(d), sees, hooks.log)
@@ -378,7 +382,7 @@ async function foodBeforeDig (bot, job, token, hooks) {
     const m = kind === 'search' ? search : kind === 'build' ? hooks.moves?.build : hooks.moves?.walk
     if (m) bot.pathfinder.setMovements(m)
   }
-  const h = { ...hooks, useMoves }
+  const h = { ...hooks, useMoves, sight: DIG_SIGHT }
   while (!token.cancelled) {
     if (hooks.enough()) return 'enough'
     if (job.spent >= searchMs && hooks.minimum()) return 'minimum'
@@ -395,4 +399,21 @@ async function foodBeforeDig (bot, job, token, hooks) {
   return 'cancelled'
 }
 
-module.exports = { foodMission, foodBeforeDig, DIG_SEARCH_MS, DIG_SEARCH_MAX_MS, searchMoves, chestWants, nextRing, underCover, skyLevel, SIGHT, RING_STEP, MAX_RING, EAT_RAW_AT, LAST_RESORT_AT }
+// Wood from a natural tree it can see, 2 logs a stop, while it walks around short of food. Returns the logs it got
+async function woodOnTheWay (bot, token, { log = () => {}, say = () => {} } = {}) {
+  const { gather, visible, LOGS } = require('./gather')
+  const logs = bot.inventory.items().filter(i => /_log$/.test(i.name)).reduce((n, i) => n + i.count, 0)
+  if (logs >= ROAM_LOGS) return 0
+  const seen = visible(bot, LOGS, () => false, { logs: true })
+  const name = seen.length ? bot.blockAt(seen[0])?.name : null
+  if (!name) return 0
+  say('Getting some wood while I look for food')
+  try {
+    return await gather(bot, name, 2, token, { log })
+  } catch (err) {
+    log(`${bot.username} wood on the way: ${err.message}`)
+    return 0
+  }
+}
+
+module.exports = { foodMission, foodBeforeDig, woodOnTheWay, ROAM_RING, ROAM_LOGS, DIG_SEARCH_MS, DIG_SEARCH_MAX_MS, searchMoves, chestWants, nextRing, underCover, skyLevel, SIGHT, RING_STEP, MAX_RING, EAT_RAW_AT, LAST_RESORT_AT }

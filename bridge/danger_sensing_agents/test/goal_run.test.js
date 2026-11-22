@@ -357,3 +357,112 @@ test('a part handed over and the rest lost is not planned again, so it never giv
   assert.ok(gave(bot, 'oak_log') <= 3)
 })
 
+
+// ---------- a gather or craft that came up short plans again from the real bag ----------
+
+// iron gathers land only what keep(attempt, asked) says, and end with the given result
+function ironGathers (keep, result = 'short') {
+  const ref = { attempts: 0 }
+  const s = setup({
+    result: kind => {
+      if (kind !== 'iron') return 'done'
+      ref.attempts++
+      const landed = ref.bot.countOf('raw_iron') - ref.before
+      const kept = keep(ref.attempts, landed)
+      ref.bot.take('raw_iron', Math.max(0, landed - kept))
+      ref.before = ref.bot.countOf('raw_iron')
+      return kept >= landed ? 'done' : result
+    }
+  })
+  ref.bot = s.bot
+  ref.before = 0
+  return { ...s, ref }
+}
+
+test('a gather that ends short once plans again for the rest and finishes the goal', async () => {
+  const { bot, agents, m, gathers } = ironGathers((attempt, landed) => attempt === 1 ? landed - 1 : landed)
+  await chat(agents, bot, 'Agent1 make me an iron pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Done with the plan|Stopping the plan/), 25000), bot.chats.join(' | '))
+  assert.ok(!said(bot, /Stopping the plan/), bot.chats.join(' | '))
+  assert.equal(gave(bot, 'iron_pickaxe'), 1)
+  assert.deepEqual(gathers.filter(g => g.startsWith('iron')), ['iron 3', 'iron 1'])
+})
+
+test('a gather that keeps ending short with some progress stops after two new plans with the normal failure line', async () => {
+  const { bot, agents, m, gathers } = ironGathers((attempt, landed) => attempt < 3 ? 1 : landed - 1)
+  await chat(agents, bot, 'Agent1 make me an iron pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Stopping the plan/), 25000), bot.chats.join(' | '))
+  assert.ok(said(bot, /^Stopping the plan at step \d+ of \d+ \(gather 1 raw iron\): it ended with short/), bot.chats.join(' | '))
+  assert.deepEqual(gathers.filter(g => g.startsWith('iron')), ['iron 3', 'iron 2', 'iron 1'])
+  assert.equal(gave(bot, 'iron_pickaxe'), 0)
+})
+
+test('a new plan that got nothing more into the bag stops early, without spending the second one', async () => {
+  const { bot, agents, m, gathers } = ironGathers(() => 0)
+  await chat(agents, bot, 'Agent1 make me an iron pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Stopping the plan/), 25000), bot.chats.join(' | '))
+  assert.deepEqual(gathers.filter(g => g.startsWith('iron')), ['iron 3', 'iron 3'])
+  assert.equal(gave(bot, 'iron_pickaxe'), 0)
+})
+
+test('a full bag is not planned again: more walking would not change it', async () => {
+  const { bot, agents, m, gathers } = ironGathers(() => 0, 'full')
+  await chat(agents, bot, 'Agent1 make me an iron pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Stopping the plan/), 25000), bot.chats.join(' | '))
+  assert.deepEqual(gathers.filter(g => g.startsWith('iron')), ['iron 3'])
+})
+
+test('a craft that throws once (no path to the table) plans again and still hands the pickaxe over', async () => {
+  const { bot, agents, m } = setup()
+  const craft = bot.craft
+  let thrown = 0
+  bot.craft = async (...a) => {
+    if (!thrown && bot.countOf('iron_ingot') >= 3) {
+      thrown++
+      throw new Error('No path to the goal!')
+    }
+    return craft(...a)
+  }
+  await chat(agents, bot, 'Agent1 make me an iron pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Done with the plan|Stopping the plan/), 25000), bot.chats.join(' | '))
+  assert.equal(thrown, 1)
+  assert.ok(!said(bot, /Stopping the plan/), bot.chats.join(' | '))
+  assert.equal(gave(bot, 'iron_pickaxe'), 1)
+})
+
+// ---------- an offered drop that never reached the bag ----------
+
+test('an offered drop that lands out of reach is logged with where it lay, and the bot gets its own', async () => {
+  const rcon = ownerHas([['diamond', 3]])
+  const { bot, agents, m, gathers } = setup({ inv: { iron_pickaxe: 1, stick: 2, crafting_table: 1 }, rcon })
+  const lines = []
+  agents.log = l => lines.push(l)
+  bot.entities[400] = { id: 400, name: 'item', position: new Vec3(40.25, 64, 0.5), getDroppedItem: () => ({ name: 'diamond', count: 3 }) }
+  await chat(agents, bot, 'make me a diamond pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Done with the plan/)), bot.chats.join(' | '))
+  assert.deepEqual(gathers, ['diamond 3'])
+  assert.ok(lines.some(l => /ask ended without the items: diamond at 40\.25 64\.00 0\.50, bot at -?\d+\.\d\d /.test(l)), lines.join('\n'))
+})
+
+test('an owner who drops nothing is logged as no drop seen', async () => {
+  const rcon = ownerHas([['diamond', 3]])
+  const { bot, agents, m } = setup({ inv: { iron_pickaxe: 1, stick: 2, crafting_table: 1 }, rcon })
+  const lines = []
+  agents.log = l => lines.push(l)
+  await chat(agents, bot, 'make me a diamond pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /Done with the plan/)), bot.chats.join(' | '))
+  assert.ok(lines.some(l => /ask ended without the items: no such drop seen, bot at /.test(l)), lines.join('\n'))
+})
+
+test('items that arrived are not logged as missed', async () => {
+  const rcon = ownerHas([['diamond', 3]])
+  const { bot, agents, m } = setup({ inv: { stick: 2, crafting_table: 1 }, rcon })
+  agents.askWaitMs = 3000
+  const lines = []
+  agents.log = l => lines.push(l)
+  await chat(agents, bot, 'make me a diamond pickaxe')
+  assert.ok(await tickUntil(m, () => said(bot, /You have 3 diamonds, drop them to me/)), bot.chats.join(' | '))
+  bot.give('diamond', 3)
+  assert.ok(await tickUntil(m, () => said(bot, /Done with the plan/)), bot.chats.join(' | '))
+  assert.ok(!lines.some(l => /ask ended without/.test(l)), lines.join('\n'))
+})

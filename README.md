@@ -9,6 +9,7 @@ AI agents that play Minecraft with you and against you.
 - [director](director/README.md): the mob director, a Paper plugin that turns hostile mobs against one player
 - `bridge/fighter.js` connects a trained fighting network to a Mineflayer bot on a real server.
 - `agents_policy.py` runs a saved fighting network for the agents.
+- [live demo walkthrough](docs/demo-walkthrough.md): the full show, from asking for a diamond pickaxe in plain English to an evil mob attack and a 1 versus 1.
 - `docs/` also covers the agents' setup and the danger assessor, with a plan for the goal agent.
 
 The crafting planner reads a recipe file generated from a local Minecraft server when one exists, and otherwise uses the recipes in minecraft-data.

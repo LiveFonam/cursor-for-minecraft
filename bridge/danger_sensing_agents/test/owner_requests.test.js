@@ -242,6 +242,19 @@ test('on the way: a close animal in sight, and none that is far, a baby, behind 
   assert.equal(animalOnTheWay(s.bot), null, 'the bag holds its reserve')
 })
 
+test('on the way: a bag of 16 bread is no reason to walk past a close cow', () => {
+  const { bot } = makeBot()
+  bot.give('bread', 16)
+  const cow = animal(bot, 'cow', 4.5, 0.5)
+  assert.equal(animalOnTheWay(bot), cow)
+})
+
+test('a hunt that was called off says so, it did not time out', async () => {
+  const { bot } = makeBot()
+  const cow = animal(bot, 'cow', 4.5, 0.5)
+  assert.equal(await huntOne(bot, cow, { cancelled: true }, () => {}), 'cancelled')
+})
+
 test('on the way: a walk that is much longer than the line to it does not count', () => {
   const { bot } = makeBot()
   animal(bot, 'cow', 6.5, 0.5)
@@ -628,4 +641,49 @@ test('a short way down needs no search, and a search a fight cut short carries o
   const task = {}
   assert.equal(await foodBeforeLongDig(s.ctx, task, 'iron', { cancelled: true }), false)
   assert.ok(!task.foodChecked, 'it looks again when the job resumes')
+})
+
+// ---------- who fights a creeper once the assessor has marked it for a fight (cornered, or it kept following) ----------
+
+function fighterChoice (name, { armored = false } = {}) {
+  const s = creeperAt(2.5, { armored })
+  s.e.name = name
+  const calls = []
+  s.bot.agentsMobFight = { start: (t, o) => { calls.push(o.useNet); return Promise.resolve('stopped') }, stop () {} }
+  const mode = s.ctx.manager.get('mobfight')
+  mode.focus = s.e
+  mode.update()
+  return calls
+}
+
+test('a bare bot with an axe, cornered by a creeper, fights it scripted and not with the network', () => {
+  assert.deepEqual(fighterChoice('creeper'), [false])
+})
+
+test('the same bot in armor that outlasts the blast still gives the creeper to the network', () => {
+  assert.deepEqual(fighterChoice('creeper', { armored: true }), [true])
+})
+
+test('a bare bot still gives every other mob to the network', () => {
+  assert.deepEqual(fighterChoice('zombie'), [true])
+})
+
+test('a bare bot cornered by a swelling creeper backs away from it on the real fighter', async () => {
+  const { goals: pathGoals } = require('mineflayer-pathfinder')
+  const { bot, ctx, e } = creeperAt(2.5)
+  e.metadata = { 16: 1, 9: 20 }
+  bot.attack = () => assert.fail('no swing at a swelling creeper')
+  const net = sharedMobNet(() => {})
+  const saved = net.checked
+  net.checked = { ok: true }
+  const mode = ctx.manager.get('mobfight')
+  try {
+    mode.focus = e
+    mode.update()
+    for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve))
+    assert.ok(bot.pathfinder.goal instanceof pathGoals.GoalInvert, 'keeps away from the fuse')
+  } finally {
+    mode.exit()
+    net.checked = saved
+  }
 })

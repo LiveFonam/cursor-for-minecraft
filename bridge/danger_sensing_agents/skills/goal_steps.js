@@ -71,10 +71,10 @@ async function runTake (ctx, job, token) {
 }
 
 // Items of these names lying close by: the ones the owner just dropped
-function wantedDrops (bot, names) {
+function wantedDrops (bot, names, range = DROP_RANGE) {
   const me = bot.entity.position
   return Object.values(bot.entities || {})
-    .filter(e => e.name === 'item' && e.position && dist(e.position, me) <= DROP_RANGE)
+    .filter(e => e.name === 'item' && e.position && dist(e.position, me) <= range)
     .filter(e => names.has(typeof e.getDroppedItem === 'function' ? e.getDroppedItem()?.name : null))
     .sort((a, b) => dist(a.position, me) - dist(b.position, me))
 }
@@ -130,7 +130,14 @@ async function runAsk (ctx, job, token) {
     }
     await sleep(250, token)
   }
-  return token.cancelled ? 'cancelled' : 'done'
+  if (token.cancelled) return 'cancelled'
+  if (!received()) {
+    // the world is restored after a live scene, so this line is the only record of where an offered drop lay
+    const at = q => `${q.x.toFixed(2)} ${q.y.toFixed(2)} ${q.z.toFixed(2)}`
+    const lying = wantedDrops(bot, names, Infinity).map(e => `${e.getDroppedItem().name} at ${at(e.position)}`)
+    agents.log(`${bot.username} ask ended without the items: ${lying.join(', ') || 'no such drop seen'}, bot at ${at(bot.entity.position)}`)
+  }
+  return 'done'
 }
 
 // Walks to a player: to where the bot sees them, or to where the server says they are when they are out of sight.

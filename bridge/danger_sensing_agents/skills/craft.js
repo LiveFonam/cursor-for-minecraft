@@ -353,12 +353,13 @@ async function pickUpTable (bot, job, token) {
   await nearBlock(bot, b.position, token)
   const axe = bot.inventory.items().find(i => /_axe$/.test(i.name))
   if (axe) await bot.equip(axe, 'hand')
+  const tables = () => bot.inventory.items().filter(i => i.name === 'crafting_table').reduce((n, i) => n + i.count, 0)
+  const before = tables()
   await bot.dig(b, true)
-  await sleep(300)
-  const drop = Object.values(bot.entities || {}).find(e => e.name === 'item' && e.position.distanceTo(b.position) < 3)
-  if (drop) {
-    try { await goTo(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5), token, 5000) } catch {}
-  }
+  await require('./pickup').pickUpDrops(bot, b.position.offset(0.5, 0.5, 0.5), token, { radius: 3, settleMs: 300, limitMs: 6000 })
+  // the bag updates a moment after the item is taken, and a next craft that looks too soon builds a second table
+  const until = Date.now() + 1500
+  while (tables() <= before && Date.now() < until && !token?.cancelled) await sleep(50)
   job.table = null
   job.tableOurs = false
   return true

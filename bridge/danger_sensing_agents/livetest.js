@@ -2282,6 +2282,7 @@ async function runTest (name) {
     try { await cleanup(s) } catch (err) { log(`cleanup: ${err.message}`) }
     result.ended = new Date().toISOString()
     result.minutes = round((Date.parse(result.ended) - Date.parse(result.started)) / MINUTE)
+    result.master_distance = require('./skills/gather').masterDistance(s.path, s.spot)
     result.path = s.path.filter((p, i) => i % Math.max(1, Math.ceil(s.path.length / 400)) === 0).map(p => [p.x, p.y, p.z])
     saveResult(name, result)
     current = null
@@ -2402,6 +2403,7 @@ async function runSessionScene (s, name, roundNo, rounds) {
     try { await closeSessionBot(s) } catch (err) { log(`closing the bot: ${err.message}`) }
     result.ended = new Date().toISOString()
     result.minutes = round((Date.parse(result.ended) - Date.parse(result.started)) / MINUTE)
+    result.master_distance = require('./skills/gather').masterDistance(s.path, s.spot)
     result.path = s.path.filter((p, i) => i % Math.max(1, Math.ceil(s.path.length / 400)) === 0).map(p => [p.x, p.y, p.z])
     saveResult(name, result)
   }

@@ -301,7 +301,7 @@ test('the survival modes run in this order, above the jobs', () => {
   const ctx = { bot, agents: fakeAgents(bot) }
   const m = makeModes(ctx)
   assert.deepEqual(m.modes.map(x => x.name),
-    ['escape', 'kill', 'retreat', 'avoid', 'guard', 'mobfight', 'defend', 'findfood', 'eat', 'give', 'come', 'resupply', 'craft', 'gather', 'build', 'mine', 'explore', 'farm', 'follow', 'guardpost', 'idle'])
+    ['escape', 'kill', 'retreat', 'avoid', 'guard', 'mobfight', 'defend', 'findfood', 'eat', 'give', 'come', 'resupply', 'craft', 'torches', 'gather', 'build', 'mine', 'explore', 'farm', 'follow', 'guardpost', 'idle'])
   assert.ok(ctx.danger instanceof DangerAssessor)
 })
 
@@ -322,4 +322,19 @@ test('the mob fighting mode takes a mob the assessor picked, defend only a playe
   assert.equal(resupply.wants(), false)
   ctx.staying = false
   assert.equal(resupply.wants(), true)
+})
+
+test('an enderman the game flags as having a target is an enemy before its first hit, and only while that lasts', () => {
+  const { bot, a, clock, spawn } = setup()
+  const e = spawn('enderman', bot.entity.position.x + 2, bot.entity.position.z)
+  e.metadata = []
+  a.update()
+  assert.equal(a.report.fight, null, 'calm: left alone')
+  e.metadata[17] = true
+  a.update()
+  assert.equal(a.report.fight?.entity?.id, e.id, 'angry: fought')
+  e.metadata[17] = false
+  clock.add(31000)
+  a.update()
+  assert.equal(a.report.fight, null, 'calm again: left alone')
 })

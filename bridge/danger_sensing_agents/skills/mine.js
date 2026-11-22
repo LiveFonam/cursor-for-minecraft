@@ -14,14 +14,15 @@ const { Vec3 } = require('vec3')
 const { goals } = require('mineflayer-pathfinder')
 const { sleep } = require('./human')
 const { goTo, walkOnly, walkOnlyMoves, dropDigMoves } = require('./move')
+const { digHazard } = require('../hazards')
 const { canFlow, inPickupBox, pickupSpot, preAim, seesBlock } = require('./motion')
 const { bestPickaxeItem } = require('./gather_kinds')
+const { GoalPickup, pickUpDrops } = require('./pickup')
 
 const SEE_RADIUS = { off: 24, light: 20, full: 16 }
 const NOTICE = 4
 const REACH = 4.4             // a little under the server's 4.5 block reach
 const MAX_EXPLORE = 400      // blocks of tunnel before giving up
-const PICKUP_MS = 4000
 const DROP_WAIT_MS = 350
 const DROP_APPEAR_TICKS = 10  // a broken block's drop shows up within this
 const DROP_SHOW_TICKS = 4     // after collecting an older drop, how long this block's own may still take to land
@@ -112,6 +113,32 @@ function pickTool (bot, block) {
   return { item: best }
 }
 
+const WEARS_OUT = /_(pickaxe|axe|shovel|hoe|sword)$|^(shears|flint_and_steel)$/
+
+// A tool loses durability on every block it breaks, so one that would not dig this block any faster leaves the hand:
+// dirt is dug by hand unless there is a shovel. It wraps bot.dig, so every job and the pathfinder follow the rule
+function keepToolsForTheirBlocks (bot) {
+  if (!bot.dig || bot.digKeepsTools) return
+  bot.digKeepsTools = true
+  const dig = bot.dig.bind(bot)
+  bot.dig = (block, ...rest) => {
+    try {
+      const pick = pickTool(bot, block)
+      if (!pick.error && !pick.item && WEARS_OUT.test(bot.heldItem?.name || '')) {
+        const start = bot.inventory.hotbarStart ?? 36
+        for (let i = 0; i < 9; i++) {
+          const item = bot.inventory.slots?.[start + i]
+          if (!item || !WEARS_OUT.test(item.name)) {
+            bot.setQuickBarSlot(i)
+            break
+          }
+        }
+      }
+    } catch {}  // choosing a hand must never stop the dig itself
+    return dig(block, ...rest)
+  }
+}
+
 async function equipFor (bot, block) {
   const pick = pickTool(bot, block)
   if (pick.error) throw new MineError(pick.error)
@@ -121,22 +148,6 @@ async function equipFor (bot, block) {
 const dropsNear = (bot, pos) => Object.values(bot.entities)
   .filter(e => e.name === 'item' && e.position.distanceTo(pos) < 4)
   .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
-
-// Any standing cell where the game would hand this drop over
-class GoalPickup extends goals.Goal {
-  constructor (drop) {
-    super()
-    this.drop = drop.clone()
-  }
-
-  heuristic (n) {
-    return Math.hypot(n.x + 0.5 - this.drop.x, n.z + 0.5 - this.drop.z) + Math.abs(n.y - this.drop.y)
-  }
-
-  isEnd (n) {
-    return inPickupBox(new Vec3(n.x + 0.5, n.y, n.z + 0.5), this.drop, 0.02)
-  }
-}
 
 // The items lying around right now, taken before a dig: anything new after it is that block's own drop
 const itemIds = bot => new Set(Object.values(bot.entities).filter(e => e.name === 'item').map(e => e.id))
@@ -177,26 +188,37 @@ function mayWalkTo (bot, at) {
 
 // No walking way to a drop: the hole an ore leaves at head height has a solid floor, so the bot cannot stand in it and the
 // drop can lie past its pickup range. The cheapest way in that opens at most DROP_DIG_BLOCKS of natural ground and builds
-// nothing, usually the one block under the first hole. True when it got there
-async function digToDrop (bot, at, token, ms) {
+// nothing, usually the one block under the first hole. True when it got there. note(why): told why it did not
+async function digToDrop (bot, at, token, ms, note = () => {}) {
   const goal = new GoalPickup(at)
   const moves = dropDigMoves(bot)
   let plan
   try {
     plan = bot.pathfinder.getPathTo(moves, goal, DROP_PLAN_MS)
-  } catch {
+  } catch (err) {
+    note(`path search threw ${err.message}`)
     return false
   }
-  if (plan?.status !== 'success') return false
+  if (plan?.status !== 'success') {
+    note(`path ${plan?.status ?? 'none'}`)
+    return false
+  }
   const opens = plan.path.reduce((n, m) => n + (m.toBreak?.length || 0), 0)
-  if (opens > DROP_DIG_BLOCKS || plan.path.some(m => m.toPlace?.length)) return false
+  const places = plan.path.reduce((n, m) => n + (m.toPlace?.length || 0), 0)
+  if (opens > DROP_DIG_BLOCKS || places) {
+    note(`path opens ${opens} blocks, places ${places}`)
+    return false
+  }
   const before = bot.pathfinder.movements
   const ends = Date.now() + ms
   const limit = setTimeout(() => { try { bot.stopDigging() } catch {} }, ms)
   try {
     // the first block goes at once, as the next dig of the chain, so there is no stop while a walk gets going
     for (const c of plan.path[0]?.toBreak || []) {
-      if (!await clearBlock(bot, new Vec3(c.x, c.y, c.z), token)) return false
+      if (!await clearBlock(bot, new Vec3(c.x, c.y, c.z), token)) {
+        note(`could not open ${c.x} ${c.y} ${c.z}`)
+        return false
+      }
     }
     if (token.cancelled) return false
     // one step in a straight line now: the caller's walk takes it without the stop at the end of a path
@@ -204,7 +226,8 @@ async function digToDrop (bot, at, token, ms) {
     bot.pathfinder.setMovements(moves)
     await goTo(bot, goal, token, Math.max(250, ends - Date.now()))
     return !token.cancelled
-  } catch {
+  } catch (err) {
+    note(`walk failed: ${err.message}`)
     return false
   } finally {
     clearTimeout(limit)
@@ -230,6 +253,7 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
   let onThis = 0
   const left = new Set()      // out of reach: it stays behind, and the others are still collected
   const searched = new Set()
+  const digNotes = new Map()  // why a dig for this drop did not get it
   const until = Date.now() + DROP_ALL_MS
   // the world is restored after a live scene, so this line is the only record of where a lost drop lay
   const giveUp = (e, why) => {
@@ -237,7 +261,8 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
     let name = 'item'
     try { name = e.getDroppedItem?.()?.name || name } catch {}
     const at = q => `${q.x.toFixed(2)} ${q.y.toFixed(2)} ${q.z.toFixed(2)}`
-    log?.(`${bot.username} left a drop behind (${why}): ${name} at ${at(e.position)}, bot at ${at(bot.entity.position)}`)
+    const dig = digNotes.get(e.id) || (dug.has(e.id) ? 'already tried' : null)
+    log?.(`${bot.username} left a drop behind (${why}): ${name} at ${at(e.position)}, bot at ${at(bot.entity.position)}${dig ? `, dig: ${dig}` : ''}`)
   }
   try {
     // this block's own drop will land past its reach with no way there on foot: the next dig starts now, as the chain's
@@ -313,7 +338,8 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
         const ms = Math.min(DROP_DIG_MS, until - Date.now())
         if (!digNext && !dug.has(drop.id) && ms > 500 && digFor?.(drop)) {
           dug.add(drop.id)
-          if (await digToDrop(bot, d, token, ms)) {
+          if (await digToDrop(bot, d, token, ms, why => digNotes.set(drop.id, why))) {
+            digNotes.set(drop.id, 'opened the way, still could not reach it')
             onThis = 0
             continue
           }
@@ -333,16 +359,7 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
 // Picks up drops around a spot
 async function collectAround (bot, pos, token, flow = {}) {
   if (canFlow(bot)) return walkOntoDrops(bot, pos, token, flow)
-  await sleep(DROP_WAIT_MS)
-  const until = Date.now() + PICKUP_MS
-  while (!token.cancelled && Date.now() < until) {
-    const drop = Object.values(bot.entities).find(e => e.name === 'item' && e.position.distanceTo(pos) < 4)
-    if (!drop) return
-    try {
-      await goTo(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.6), token)
-    } catch { return }
-    await sleep(250)
-  }
+  await pickUpDrops(bot, pos, token, { settleMs: DROP_WAIT_MS, limitMs: DROP_ALL_MS })
 }
 
 async function placeTorch (bot, ctx) {
@@ -386,7 +403,7 @@ async function clearBlock (bot, pos, token) {
     // anything but air gets dug: snow layers, grass and flowers count as passable in the block data, and a snow
     // layer still held the bot up in the live test
     if (!b || AIR.has(b.name)) return true
-    if (!b.diggable || LIQUID.has(b.name)) return false
+    if (!b.diggable || LIQUID.has(b.name) || digHazard(bot, b)) return false
     // the drop does not matter here, only that the block goes (snow wants a shovel to drop anything)
     const pick = pickTool(bot, b)
     if (pick.item && bot.heldItem?.type !== pick.item.type) await bot.equip(pick.item, 'hand')
@@ -537,6 +554,10 @@ async function mineOne (bot, ctx, token) {
     countTunnel(ctx, bot.entity.position.floored(), Math.round(start.distanceTo(bot.entity.position)))
     const again = bot.blockAt(pos)
     if (!again || !ids.includes(again.type)) continue
+    if (digHazard(bot, again)) {
+      ctx.skip.add(pos.toString())
+      continue
+    }
     await equipFor(bot, again)  // the walk may have dug with another tool
     if (token.cancelled) return 'cancelled'
     const known = itemIds(bot)
@@ -650,6 +671,7 @@ module.exports = {
   goTo,
   visibleTargets,
   pickTool,
+  keepToolsForTheirBlocks,
   isExposed,
   equipFor,
   collectAround,

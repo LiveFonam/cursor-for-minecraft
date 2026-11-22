@@ -55,6 +55,11 @@ function rawCarried (bot) {
 // The fuel it may burn, in the order it burns it: [[name, items one cooks, how many]]. keepCoal is coal the current job
 // still needs: it comes off the coal, then the charcoal, then coal blocks (9 coal each)
 function fuelStock (bot, keepCoal = 0) {
+  // all coal kept: a stop beside a job's furnace, which burns only logs so the next craft keeps its planks and sticks
+  if (keepCoal === Infinity) {
+    const logs = new Set(bot.inventory.items().filter(i => /_log$/.test(i.name) && !/crimson|warped/.test(i.name)).map(i => i.name))
+    return [...logs].map(name => [name, WOOD_FUEL, countOf(bot, name)])
+  }
   const keep = {}
   let reserve = keepCoal
   for (const name of ['coal', 'charcoal']) {
@@ -203,7 +208,10 @@ function coalForJobs (ctx) {
   const plan = ctx.plan
   if (plan?.steps) {
     let left = 0
-    for (const text of plan.steps.slice(plan.index || 0)) left += Number(/^smelt (\d+) /.exec(text)?.[1] || 0)
+    // one step's words can name several smelts: "smelt 4 raw iron, smelt 4 raw gold, craft ..."
+    for (const text of plan.steps.slice(plan.index || 0)) {
+      for (const m of text.matchAll(/(?:^|, )smelt (\d+) /g)) left += Number(m[1])
+    }
     smelts = Math.max(smelts, left)
   }
   return Math.ceil(smelts / 8)
@@ -340,7 +348,7 @@ async function pickUpFurnace (bot, work, token) {
   await sleep(300)
   const drop = Object.values(bot.entities || {}).find(e => e.name === 'item' && e.position && e.position.distanceTo(b.position) < 3)
   if (drop) {
-    try { await goTo(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5), token, 5000) } catch {}
+    try { await goTo(bot, new (require('./pickup').GoalPickup)(drop.position), token, 5000) } catch {}
   }
   work.furnace = null
   work.furnaceOurs = false
@@ -349,6 +357,24 @@ async function pickUpFurnace (bot, work, token) {
 
 // Cooks the raw food it carries. work keeps the furnace and any smelt in progress across runs (a fight cancels the
 // token and the next run carries on). limit: the most items this stop cooks. Returns how many items it cooked
+// How many raw items are worth cooking beside a furnace it already has out for a job: a short stop on wood alone, so
+// the plan's coal is never touched, and none with a good meal of ready food in the bag
+function furnaceCookLimit (bot) {
+  const { readyFoods } = require('./food')
+  const ready = readyFoods(bot).reduce((n, x) => n + x.f.foodPoints * x.item.count, 0)
+  if (ready >= FURNACE_COOK_READY) return 0
+  const raw = rawCarried(bot).reduce((n, x) => n + x.count, 0)
+  return Math.min(FURNACE_COOK_MAX, raw, fuelItems(bot, Infinity))
+}
+
+// After the job's last craft, while its furnace still stands. Returns how many items it cooked
+async function cookAtFurnace (bot, job, token, log = () => {}) {
+  const limit = furnaceCookLimit(bot)
+  if (limit < 1 || token?.cancelled) return 0
+  log(`${bot.username} cooking ${limit} raw food in the furnace it has out`)
+  return cookSafely(bot, token, { log, work: { furnace: job.furnace, keepCoal: () => Infinity }, limit })
+}
+
 async function cookFood (bot, token, { log = () => {}, say = () => {}, work = {}, limit = Infinity } = {}) {
   const { smelt, emptyFurnace } = require('./crafter')
   work.stats = work.stats || { crafted: 0, smelted: 0 }
@@ -416,4 +442,7 @@ async function cookFood (bot, token, { log = () => {}, say = () => {}, work = {}
   return cooked
 }
 
-module.exports = { cookFood, cookSafely, cookFailed, cookOption, letGoFarFurnace, canCook, cookCheck, rawCarried, fuelFor, fuelItems, furnaceSource, furnaceNear, furnaceRemembered, rememberFurnace, coalForJobs, workFor, COOKED }
+const FURNACE_COOK_MAX = 4     // about 40 s beside the furnace
+const FURNACE_COOK_READY = 20  // points of ready food that make the stop not worth it
+
+module.exports = { cookFood, cookSafely, cookAtFurnace, furnaceCookLimit, cookFailed, cookOption, letGoFarFurnace, canCook, cookCheck, rawCarried, fuelFor, fuelItems, furnaceSource, furnaceNear, furnaceRemembered, rememberFurnace, coalForJobs, workFor, COOKED }

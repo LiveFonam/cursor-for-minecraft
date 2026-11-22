@@ -158,6 +158,22 @@ test('crafting on a table it places and picks back up', async () => {
   assert.ok(world.placed >= 1)
 })
 
+test('a table it digs up is back in the bag before the next craft looks, so it builds no second one', async () => {
+  const { bot } = makeBot()
+  bot.give('oak_log', 3)
+  const p = planItems(bot.registry, new Map([['composter', 1]]), new Map([['oak_log', 3]]))
+  const job = {}
+  await craftAll(bot, p.crafts, job, { cancelled: false })
+  const { pickUpTable } = require('../skills/craft')
+  const give = bot.give
+  bot.give = (name, n) => {
+    if (name === 'crafting_table') setTimeout(() => give(name, n), 600)
+    else give(name, n)
+  }
+  await pickUpTable(bot, job, { cancelled: false })
+  assert.equal(bot.countOf('crafting_table'), 1)
+})
+
 test('the farm job harvests ripe wheat, replants and stores the harvest in a chest', async () => {
   const { bot, world } = makeBot()
   withWater(bot, world)

@@ -574,3 +574,30 @@ test('the mission does not hang on a furnace it cannot use', async () => {
   assert.equal(places, 1)
   assert.ok(bot.food >= 14)
 })
+
+test('the state before the a10 heap crash: 3 beef, little fuel, the job\'s new furnace: feed returns and the heap stays flat', async () => {
+  const v8 = require('node:v8')
+  const vm = require('node:vm')
+  v8.setFlagsFromString('--expose-gc')
+  const gc = vm.runInNewContext('gc')
+  const round = async () => {
+    const { bot, world } = kitted({ beef: 3, oak_planks: 1, stone_pickaxe: 1 })
+    bot.food = 6
+    const spot = new Vec3(2, 64, 0)
+    world.set(spot, 'furnace', { facing: 'north', lit: false })
+    let limit
+    const stuck = new Promise((resolve, reject) => { limit = setTimeout(() => reject(new Error('feed did not return')), 5000) })
+    try {
+      await Promise.race([feed(bot, { cancelled: false }, { work: { furnace: spot, furnaceOurs: true } }), stuck])
+    } finally {
+      clearTimeout(limit)
+    }
+  }
+  await round()
+  gc()
+  const before = process.memoryUsage().heapUsed
+  for (let i = 0; i < 6; i++) await round()
+  gc()
+  const grew = process.memoryUsage().heapUsed - before
+  assert.ok(grew < 4 * 1024 * 1024, `the heap grew ${(grew / 1048576).toFixed(1)} MB over 6 rounds`)
+})

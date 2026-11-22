@@ -21,6 +21,9 @@
 
 const { planCraft, TARGETS, LABEL, craftingRecipes, resolveTarget } = require('./skills/crafter_plan')
 const { KINDS, NEED_LEVEL, resolveKind, kindOfItem, bestPickaxeOf } = require('./skills/gather_kinds')
+const { COOKED } = require('./skills/food_plan')
+
+const COOKING_LOGS = 3  // logs more at the trees for the furnace, enough to cook 4 items
 
 const PICKS = ['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe']
 const MAX_CRAFTED = 8
@@ -374,6 +377,12 @@ function planGoal (goal, sources = {}, { dimension = 'overworld' } = {}) {
 
   if (!failure) armForMining()
   if (!failure) carrySpareCobble()
+  // wood for cooking while it is at the trees: on a trip with a furnace, with raw food now or ahead and no coal left over
+  if (!failure && work.some(s => s.kind === 'smelt') && !(stock.get('coal') > 0 || stock.get('charcoal') > 0) &&
+      (sources.expectsRaw || [...stock].some(([name, n]) => n > 0 && COOKED[name]))) {
+    const chop = work.find(s => s.kind === 'gather' && s.what === 'wood')
+    if (chop) chop.count = Math.min(chop.count + COOKING_LOGS, KINDS.wood.max)
+  }
   if (failure) return { goal, steps: [], impossible: failure, ownerSeen: !!sources.owner }
   const takeSteps = [...takes.values()].map(t => ({ kind: 'take', pos: t.pos, items: [...t.items] }))
   const askSteps = asks.size ? [{ kind: 'ask', items: [...asks] }] : []

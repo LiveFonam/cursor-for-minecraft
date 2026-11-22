@@ -25,6 +25,9 @@ const bp = require('./skills/blueprint')
 const { withCrop } = require('./skills/farm')
 const { Designer } = require('./designer')
 const { Friends, Blackboard, guardAttacks } = require('./targets')
+const { guardDigging } = require('./hazards')
+const { guardHazards } = require('./skills/move')
+const { DeathRecorder } = require('./death_log')
 const { makeModes } = require('./behaviors')
 const { FightSkill, ensureKit, stopFight } = require('./skills/fight')
 const { PolicyClient } = require('./skills/policy')
@@ -50,6 +53,9 @@ const GOAL_STEPS = new Set(['survey', 'take', 'ask', 'walk', 'hand', 'prep', 'ax
 // really arrived, and the last round only gathers
 const GOAL_ROUNDS = 3
 const GOAL_TOOL_REPLANS = 2  // a pickaxe or the finished item lost on the way (broken, or a death): the goal plans again this often
+// A step that ended early for a reason a new plan can get past, sharing that budget. A full bag or an unknown kind stays
+// the same whatever it plans, and a job another order replaced is not its to resume
+const WORTH_REPLANNING = { gather: new Set(['short', 'none', 'stuck', 'food', 'error']), craft: new Set(['error']) }
 const JOB_COMMANDS = new Set(['kill', 'mine', 'gather', 'come', 'give', 'build', 'expand', 'explore', 'design', 'craft', ...GOAL_STEPS])
 // one shot jobs: starting one ends the others (the farm keeps going underneath, follow comes back after)
 const ONE_SHOT = ['build', 'mine', 'explore', 'gather']
@@ -236,6 +242,7 @@ class Agents {
         spawned = true
         require('../mineflayer_fixes').applyMineflayerFixes(bot)  // real sprint actions and knockback
         installMotion(bot)  // smooth camera, jumps and paths, off during a fight
+        require('./skills/mine').keepToolsForTheirBlocks(bot)  // no pickaxe on dirt
         this.setupBot(bot)
         installBlastTrace(bot, () => this.ctxs.get(name), log)  // what it does after an explosion next to it
         log(`${name} joined`)
@@ -276,12 +283,21 @@ class Agents {
     ctx.fight = new FightSkill(bot, this.policy, { friends: this.friends, noDigMoves: this.noDigMoves(bot), log })
     bot.agentsFight = ctx.fight
     makeModes(ctx)
-    ctx.manager.hooks.holdControl = (active, chosen) => holdForDig(bot, chosen?.name, { fireOnly: ctx.danger.report?.escape?.kind === 'fire' })
+    // no job breaks a block that holds back lava, except a head stuck in a block digging itself free and the table or
+    // furnace it placed itself (a craft that cannot take its table back would stop there)
+    guardDigging(bot, { allow: block => ctx.danger.report?.escape?.kind === 'suffocation' || /^(crafting_table|furnace)$/.test(block?.name || '') })
+    ctx.deaths = new DeathRecorder(bot, {
+      metrics: this.metricsFile,
+      status: () => ctx.manager?.status(),
+      job: () => ctx.manager?.active?.name
+    })
+    ctx.manager.hooks.holdControl =(active, chosen) => holdForDig(bot, chosen?.name, { fireOnly: ctx.danger.report?.escape?.kind === 'fire' })
     addGoalStepMode(ctx)
     bot.agentsChests = chestView(this.chests, bot, () => this.worldId, CONTAINERS)
     this.ctxs.set(bot.username, ctx)
     bot.on('physicsTick', () => {
       if (!ctx.alive) return
+      ctx.deaths.sample()
       // the danger assessor (threats.js) 5 times a second, before the modes read its report
       if (ctx.ticks % 4 === 0) ctx.danger.update()
       ctx.manager.tick()
@@ -291,12 +307,14 @@ class Agents {
     })
     ctx.ticks = 0
     bot.on('messagestr', (text, position, message, senderUuid) => {
+      ctx.deaths.message(text)
       if (this.listener() !== bot) return
       if (!chatSender(bot.players, text, position, message, senderUuid)) return  // a system line or a look-alike
       this.handleChat(bot, text).catch(err => log(`command failed: ${err.stack || err.message}`))
     })
     bot.on('death', () => {
       const p = ctx.lastPos || bot.entity.position
+      ctx.deaths.died(p)
       log(`${bot.username} died at ${p.floored()}`)
       this.metric({ bot: bot.username, death: true, pos: [Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)], mode: ctx.manager?.status() })
       this.event(bot, 'key', 'died', `I died at ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`, 0)
@@ -398,6 +416,7 @@ class Agents {
       m.allowParkour = true
       m.liquidCost = 50  // around water, a bot drowned walking to an ore in the live test
       m.maxDropDown = 3  // the default 4 costs half a heart
+      guardHazards(bot, m)
       bot._agentsDig = m
     }
     return bot._agentsDig
@@ -409,6 +428,7 @@ class Agents {
       m.canDig = false
       m.allow1by1towers = false
       m.scafoldingBlocks = []
+      guardHazards(bot, m)  // the retreat and back off set their goal without goTo
       bot._agentsNoDig = m
     }
     return bot._agentsNoDig
@@ -426,6 +446,7 @@ class Agents {
       m.canOpenDoors = true
       m.maxDropDown = 3
       m.liquidCost = 50
+      guardHazards(bot, m)
       bot._agentsBuild = m
     }
     return bot._agentsBuild
@@ -638,10 +659,11 @@ class Agents {
     }
     let surveyed = false
     let toolReplans = 0
+    let shortPlan = null  // what was left of the plan when a step last came up short: the same again means no progress
     for (let round = 0; round < GOAL_ROUNDS; round++) {
       if (gone()) return 'stopped'
       const last = round === GOAL_ROUNDS - 1
-      const sources = () => this.goalSources(ctx, forOwner, last ? null : ownerBag, !last)
+      const sources = () => ({ ...this.goalSources(ctx, forOwner, last ? null : ownerBag, !last), expectsRaw: true })  // it hunts on the way
       let plan = planGoal(goal, sources(), { dimension })
       // chests close by it has never opened are looked into once, before it asks the owner or goes gathering
       if (!surveyed && forOwner && bot.agentsChests && plan.steps.some(s => s.kind === 'gather' || s.kind === 'ask')) {
@@ -663,12 +685,23 @@ class Agents {
       this.say(bot, `${round ? 'Now' : 'On it'}: ${labels.map((s, i) => `${i + 1}) ${s}`).join(' ')}`.slice(0, 250))
       // what it needed is gone: a pickaxe, or the one item it made and was about to hand over
       const lostItem = (r, command) => command.name === 'hand' && r === 'short' && (goal.count ?? 1) === 1 && !bagOf(bot).get(goal.item)
-      const retry = toolReplans < GOAL_TOOL_REPLANS ? (r, command) => r === 'no_tool' || lostItem(r, command) : null
+      let cameUpShort = false
+      const retry = toolReplans < GOAL_TOOL_REPLANS
+        ? (r, command) => {
+            if (r === 'no_tool' || lostItem(r, command)) return true
+            if (!WORTH_REPLANNING[command.name]?.has(r)) return false
+            const left = labels.slice(all.findIndex(c => c.command === command)).join(' ; ')  // from the step that failed on
+            if (left === shortPlan) return false
+            shortPlan = left
+            cameUpShort = true
+            return true
+          }
+        : null
       const result = await this.runPlan(ctx, now.map(c => c.command), { labels: now.map(c => c.label), seq, final: !fetching, retry })
       if (result === 'replan') {
         toolReplans++
         round--
-        this.say(bot, 'I lost what I needed, planning again from what I have')
+        this.say(bot, cameUpShort ? 'That step came up short, planning again from what I have' : 'I lost what I needed, planning again from what I have')
         continue
       }
       if (result !== 'done') return result

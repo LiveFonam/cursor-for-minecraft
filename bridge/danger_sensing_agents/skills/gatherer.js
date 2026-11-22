@@ -11,7 +11,7 @@
 // Only blocks it can see or has uncovered itself, the same rule as the miner: no X-ray.
 
 const { goals } = require('mineflayer-pathfinder')
-const { gather, visible } = require('./gather')
+const { gather, visible, wanderPoint } = require('./gather')
 const { mineJob } = require('./mine')
 const { goTo } = require('./move')
 const { KINDS, LOGS, carriedOf, bestPickaxeOf, NEED_LEVEL, NEED_TEXT } = require('./gather_kinds')
@@ -55,9 +55,9 @@ async function gatherKind (bot, kind, want, token, deps = {}) {
   const start = carried(bot, kind)
   const target = start + want
   let result = 'done'
-  if (kind === 'wood') result = await chopWood(bot, target, token, { log, say, digMoves: deps.digMoves })
+  if (kind === 'wood') result = await chopWood(bot, target, token, { log, say, digMoves: deps.digMoves, master: deps.master })
   else if (kind === 'cobblestone') {
-    await gather(bot, 'cobblestone', want, token, { log, say })
+    await gather(bot, 'cobblestone', want, token, { log, say, master: deps.master })
     if (carried(bot, kind) < target) result = 'none'
   } else {
     // want and inBag: the job is over when the bag holds the amount, and a drop that is truly lost costs one more ore
@@ -81,7 +81,7 @@ async function gatherKind (bot, kind, want, token, deps = {}) {
 }
 
 // Logs of any wood from natural trees it can see, until it carries target logs. 'done' or 'none'
-async function chopWood (bot, target, token, { log, say, digMoves = null }) {
+async function chopWood (bot, target, token, { log, say, digMoves = null, master = null }) {
   const home = bot.entity.position.clone()
   let wanders = 0
   let dry = 0
@@ -91,19 +91,14 @@ async function chopWood (bot, target, token, { log, say, digMoves = null }) {
       const name = bot.blockAt(spots[0])?.name
       const before = carried(bot, 'wood')
       // gather() keeps to that wood until the tree is gone, then the next look picks the next tree
-      await gather(bot, name, target - before, token, { log, say })
+      await gather(bot, name, target - before, token, { log, say, master })
       if (carried(bot, 'wood') > before) { dry = 0; continue }
       if (++dry >= 3) return 'none'  // trees it sees but can't get to
     }
     if (token?.cancelled) break
     if (wanders === 0) log(`${bot.username} sees no tree it can reach, walking to look`)
     if (wanders++ >= WANDERS) return 'none'
-    const angle = Math.random() * Math.PI * 2
-    const d = 12 + Math.random() * 10
-    let x = bot.entity.position.x + Math.cos(angle) * d
-    let z = bot.entity.position.z + Math.sin(angle) * d
-    const off = Math.hypot(x - home.x, z - home.z)
-    if (off > WANDER_RANGE) { x = home.x + (x - home.x) * WANDER_RANGE / off; z = home.z + (z - home.z) * WANDER_RANGE / off }
+    const { x, z } = wanderPoint(bot.entity.position, home, { master: master?.(), early: wanders <= WANDERS / 2, range: WANDER_RANGE })
     try {
       await goTo(bot, new goals.GoalNearXZ(x, z, 3), token, 20000)
     } catch (err) {

@@ -209,6 +209,23 @@ test('a canceled dig on the way down a staircase does not end the gathering job'
   assert.ok(n > 1, 'it dug again after the canceled dig')
 })
 
+test('a staircase for cobblestone cuts only the stone asked for, even when the drops reach the bag late', async () => {
+  for (const want of [2, 3, 4]) {
+    const { bot } = makeBot({ groundY: 63 })
+    bot.give('wooden_pickaxe', 1)
+    bot.findBlocks = () => []
+    bot.pathfinder.goto = async () => {}
+    const give = bot.give
+    bot.give = (name, n) => {
+      if (name === 'cobblestone') setTimeout(() => give(name, n), 30)
+      else give(name, n)
+    }
+    await gather(bot, 'cobblestone', want, { cancelled: false }, {})
+    assert.equal(bot.digged.filter(n => n === 'stone').length, want, `stone cut for ${want} cobblestone`)
+    assert.equal(bot.inventory.items().find(i => i.name === 'cobblestone')?.count, want)
+  }
+})
+
 function brokenPickaxeScene () {
   const at = new Vec3(0, 16, 0)
   const { bot, world } = makeBot({ groundY: 63, pos: at.offset(0.5, 0, 0.5) })

@@ -12,6 +12,7 @@
 
 const { withTimeout } = require('./abort')
 const { announce } = require('../announcer')
+const { digHazard, lavaStepCost } = require('../hazards')
 
 const GOTO_MS = 20000
 const STUCK_TICKS = 80        // 4 s without moving STUCK_MOVE blocks counts as stuck
@@ -54,6 +55,21 @@ function guardHazards (bot, moves) {
       const type = state !== undefined && state !== null ? reg.blocksByStateId[state]?.id : bot.blockAt(q)?.type
       return floors.has(type) ? 100 : 0
     })
+    // beside lava costs extra and over it never. Kept for a second, the search asks about the same cells many times
+    const costs = new Map()
+    let costsAt = 0
+    moves.exclusionAreasStep.push(block => {
+      const p = block?.position
+      if (!p || typeof p.offset !== 'function') return 0
+      const now = Date.now()
+      if (now - costsAt > 1000) { costs.clear(); costsAt = now }
+      const k = `${p.x},${p.y},${p.z}`
+      if (!costs.has(k)) costs.set(k, lavaStepCost(bot, p, now))
+      return costs.get(k)
+    })
+  }
+  if (Array.isArray(moves.exclusionAreasBreak)) {
+    moves.exclusionAreasBreak.push(block => (block?.position?.offset && digHazard(bot, block) ? 100 : 0))
   }
   moves._agentsHazards = true
   return moves

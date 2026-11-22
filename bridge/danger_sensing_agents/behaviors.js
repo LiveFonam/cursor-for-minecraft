@@ -30,14 +30,16 @@ const { fight, stopFight } = require('./skills/fight')
 const { mobFight, stopMobFight, netCanFight } = require('./skills/mob_fight')
 const { mineJob, goTo } = require('./skills/mine')
 const { walkTo, rescueMoves } = require('./skills/move')
-const { foods, foodPointsCarried, foodSupply, supplyText, needsFood, eat, animalOnTheWay, huntOnTheWay, gaveUpOn, restockFood, GIVE_UP_MS } = require('./skills/food')
+const { leaveLava } = require('./hazards')
+const { foods, foodPointsCarried, foodSupply, supplyText, needsFood, eat, animalOnTheWay, huntOnTheWay, huntText, gaveUpOn, restockFood, GIVE_UP_MS } = require('./skills/food')
 const { foodNeed, returnFood, eatReason, REGEN_FOOD, GO_DOWN_MARGIN, FOOD_RECOVERED, SPRINT_FOOD } = require('./skills/food_plan')
-const { foodMission, foodBeforeDig } = require('./skills/food_mission')
+const { foodMission, foodBeforeDig, woodOnTheWay, ROAM_RING } = require('./skills/food_mission')
 const { targetDepth, bringWood } = require('./skills/mine_branch')
 const { buildJob } = require('./skills/build')
 const { farmJob, foodFromFarm, nearestFarm } = require('./skills/farm')
 const { exploreJob } = require('./skills/explore')
 const { runCraftJob, planNow, dropsNear, GIVE_RANGE } = require('./skills/crafter')
+const { torchPlan, topUpTorches } = require('./skills/torches')
 const { LABEL, describeMissing, aOrAn } = require('./skills/crafter_plan')
 const { gatherKind } = require('./skills/gatherer')
 const { KINDS: GATHER_KINDS, tasksFromItems, carriedOf } = require('./skills/gather_kinds')
@@ -52,8 +54,14 @@ const GIVE_SETTLE_TICKS = 3   // for a turn to reach the server before the throw
 const VALUABLE = new Set(['diamond', 'emerald', 'debris', 'netherite', 'ancient_debris', 'gold'])
 const SAFE_DISTANCE = 16
 const RESUPPLY_RETRY_MS = 180000  // after a food run that came back short, wait this long before the next
+const RESUPPLY_ROAM_MS = 180000   // one walk around for food and wood when no animal is close, then it looks again
+const ROAM_RECHECK_MS = 5000      // danger close or just moved by the server: how soon it asks again
+const ROAM_HOLD_MS = 15000        // after the server moves it, it stays put this long before it walks off again
+const TELEPORT_BLOCKS = 4         // further than this between two looks is the server moving it, not a walk
+const ROAM_BLOCKERS = new Set(['follow', 'guard', 'guardpost'])  // orders that keep it where it is
 const RESUPPLY_ROUNDS = 4         // hunting rounds per food run, each up to 3 animals (skills/food.js)
 const ESCAPE_RETRY_MS = 5000      // on fire with no water anywhere: let it burn out, look again after this
+const LAVA_RETRY_MS = 250         // in lava a failed try is tried again almost at once
 const HUNT_DURING = new Set(['gather', 'mine', 'explore'])  // jobs a short hunt may step into: no window open, nothing to hand over
 const WORK_MODES = new Set(['give', 'come', 'goalstep', 'craft', 'gather', 'build', 'mine', 'explore', 'farm'])  // a job that ends: food never holds one up
 const DEEP = 8                    // a job more than this far below where it started is underground
@@ -300,7 +308,9 @@ class MobFightMode extends Mode {
     const { bot, agents } = this.ctx
     if (!this.focus) return
     const target = this.focus
-    const done = mobFight(bot, target, { moves: agents.noDigMoves(bot), log: agents.log, useNet: true })
+    // a creeper that cornered a bare bot gets the scripted hit and back off: the network has no blast check of its own
+    const useNet = target.name !== 'creeper' || survivesBlast(bot)
+    const done = mobFight(bot, target, { moves: agents.noDigMoves(bot), log: agents.log, useNet })
     if (this.watched === target.id) return
     this.watched = target.id
     done.then(r => {
@@ -631,10 +641,13 @@ class EscapeMode extends JobMode {
     if (d.kind === 'suffocation') return digOut(bot, token)
     if (await douseSelf(bot, token)) return 'done'
     if (token.cancelled) return 'cancelled'
+    // lava takes a full bar in about 2.5 s: it swims for the nearest bank on its own keys, the path is only a fallback
+    if (d.kind === 'lava' && await leaveLava(bot, token)) return 'done'
+    if (token.cancelled) return 'cancelled'
     bot.pathfinder.setMovements(agents.noDigMoves(bot))
     const target = d.kind === 'lava' ? danger.safePos : waterNear(bot, 6)
     if (!target) {
-      this.retryAt = Date.now() + ESCAPE_RETRY_MS
+      this.retryAt = Date.now() + (d.kind === 'lava' ? LAVA_RETRY_MS : ESCAPE_RETRY_MS)
       return 'nowhere'
     }
     bot.setControlState('jump', d.kind === 'lava')
@@ -642,7 +655,7 @@ class EscapeMode extends JobMode {
       await goTo(bot, new goals.GoalNear(target.x, target.y, target.z, d.kind === 'lava' ? 0.5 : 0), token, 6000)
     } catch (err) {
       if (token.cancelled) return 'cancelled'
-      this.retryAt = Date.now() + ESCAPE_RETRY_MS / 5
+      this.retryAt = Date.now() + (d.kind === 'lava' ? LAVA_RETRY_MS : ESCAPE_RETRY_MS / 5)
     } finally {
       bot.setControlState('jump', false)
     }
@@ -712,7 +725,8 @@ function waterNear (bot, r) {
 // a food animal that is close, in sight and a short walk away gets a small detour (skills/food.js animalOnTheWay), even
 // when the bot is not hungry, until the bag holds a sensible reserve. The check before a long dig is the job's own
 // (foodBeforeLongDig). With no job it gets the food the reserve lacks: ripe crops, the chest and bread from a farm the
-// agents built within 96 blocks, then hunting animals nearby and cooking. A run that comes back short waits 3 minutes.
+// agents built within 96 blocks, then hunting animals nearby and cooking. A run that comes back short walks on around the
+// area for food and wood, and only waits 3 minutes when an order keeps it where it is.
 // Never during danger, and not while told to !stay
 class ResupplyMode extends JobMode {
   constructor (ctx) {
@@ -721,13 +735,35 @@ class ResupplyMode extends JobMode {
     this.retryAt = 0
     this.want = FOOD_RESERVE
     this.close = null
+    this.walk = null
+    this.roaming = false
+    this.holdUntil = 0
+    this.lastPos = null
+  }
+
+  // A jump between two looks is the server moving it: it does not walk off from where it was just put
+  noteJump () {
+    const p = this.ctx.bot.entity?.position
+    if (!p) return
+    if (this.lastPos && Math.hypot(p.x - this.lastPos.x, p.y - this.lastPos.y, p.z - this.lastPos.z) > TELEPORT_BLOCKS) {
+      this.holdUntil = Date.now() + ROAM_HOLD_MS
+    }
+    this.lastPos = { x: p.x, y: p.y, z: p.z }
+  }
+
+  // Why it may not walk around for food right now: 'order' (told to stay near), 'wait' (danger, or just moved), or null
+  roamBlock () {
+    const { danger, manager } = this.ctx
+    if (foodHeld(this.ctx) || manager.modes.some(m => m.on && ROAM_BLOCKERS.has(m.name))) return 'order'
+    return !danger.report.safe || Date.now() < this.holdUntil ? 'wait' : null
   }
 
   wants () {
     const { bot, agents, danger, manager } = this.ctx
+    this.noteJump()
     const working = !!this.ctx.foodJob || manager.modes.some(m => m.on && WORK_MODES.has(m.name))
     // a food run from before the order gives way to it, a hunt already under way finishes
-    if (this.token) return !(this.fullRun && working)
+    if (this.token) return !(this.fullRun && working) && !(this.roaming && this.roamBlock())
     const need = danger.report.resupply
     if (this.ctx.restocking) return false
     if (this.ctx.staying) {
@@ -758,7 +794,7 @@ class ResupplyMode extends JobMode {
     if (close) {
       agents.event(bot, 'normal', 'hunt-way', `A ${close.name.replace(/_/g, ' ')} close by, getting it for later`, 20000)
       const r = await huntOnTheWay(bot, close, token, agents.log)
-      agents.log(`${bot.username} hunted a ${close.name} on the way: ${r}`)
+      agents.log(`${bot.username} hunted a ${close.name} on the way: ${r} (${huntText(bot)})`)
       if (token.cancelled) return 'cancelled'
       if (r !== 'killed') gaveUpOn(bot).set(close.id, Date.now() + GIVE_UP_MS)
       return points() >= want ? 'done' : 'short'
@@ -775,15 +811,102 @@ class ResupplyMode extends JobMode {
     })
     if (token.cancelled) return 'cancelled'
     if (have < want) {
-      this.retryAt = Date.now() + RESUPPLY_RETRY_MS
-      agents.event(bot, 'normal', 'resupply-short', `${supplyText(foodSupply(bot, work), want)}, looking again in 3 minutes`, RESUPPLY_RETRY_MS)
-      return 'short'
+      const block = this.roamBlock()
+      if (block === 'order') {
+        this.retryAt = Date.now() + RESUPPLY_RETRY_MS
+        agents.event(bot, 'normal', 'resupply-short', `${supplyText(foodSupply(bot, work), want)}, looking again in 3 minutes`, RESUPPLY_RETRY_MS)
+        return 'short'
+      }
+      if (block) {
+        this.retryAt = Date.now() + ROAM_RECHECK_MS
+        return 'short'
+      }
+      agents.event(bot, 'normal', 'resupply-roam', `${supplyText(foodSupply(bot, work), want)}, walking around for food and wood`, RESUPPLY_ROAM_MS)
+      const r = await this.roam(token, () => points() >= want, work)
+      if (token.cancelled) return 'cancelled'
+      if (r !== 'enough') return 'short'  // no wait: the next run looks close by again and walks on
     }
     agents.event(bot, 'normal', 'resupply-done', `Got food. ${supplyText(foodSupply(bot, work), want)}`, 60000)
     return 'done'
   }
 
+  // Walks wider and wider rings around where it began, taking wood it passes and any animal that is close
+  async roam (token, enough, work) {
+    const { bot, agents, danger } = this.ctx
+    const p = bot.entity.position
+    if (this.walk?.center && Math.hypot(this.walk.center.x - p.x, this.walk.center.z - p.z) > ROAM_RING + 16) this.walk = null
+    this.walk = this.walk || { maxRing: ROAM_RING, anchored: true }
+    this.walk.spent = 0
+    const ms = agents.roamMs ?? RESUPPLY_ROAM_MS
+    this.roaming = true
+    try {
+      return await foodBeforeDig(bot, this.walk, token, {
+        enough,
+        minimum: () => false,
+        collect: t => woodOnTheWay(bot, t, { log: agents.log, say: text => agents.event(bot, 'normal', 'resupply-wood', text, 30000) }),
+        step: (job, text, key = 'food-step') => {
+          job.step = text
+          agents.event(bot, 'normal', key, text, 20000)
+        },
+        log: agents.log,
+        farms: () => (agents.farms ? agents.farms() : []),
+        moves: { walk: agents.noDigMoves(bot), build: agents.buildMoves?.(bot) },
+        safe: () => !!danger.report.safe,
+        work,
+        searchMs: ms,
+        maxMs: ms
+      })
+    } finally {
+      this.roaming = false
+    }
+  }
+
   describe () { return `getting food, ${foodSupply(this.ctx.bot, this.ctx.cookWork || null).total} of ${this.want} points` }
+}
+
+// A small stock of torches from coal nothing else needs (skills/torches.js). Only at a quiet moment: safe, on the ground,
+// no window open and no job at a station. It takes a second or two in the bag's own grid and never walks
+class TorchMode extends JobMode {
+  static LOOK_MS = 1000
+  static RETRY_MS = 60000
+  static MAX_MS = 10000
+
+  constructor (ctx) {
+    super('torches', ctx, 'survive')
+    this.always = true
+    this.nextLook = 0
+    this.until = 0
+    this.plan = null
+  }
+
+  wants () {
+    if (this.token) return Date.now() < this.until
+    const { bot, danger, manager } = this.ctx
+    if (Date.now() < this.nextLook) return false
+    if (!danger.report.safe || bot.currentWindow || this.ctx.restocking || bot.entity?.onGround === false) return false
+    const active = manager.active
+    if (active && !active.always && !HUNT_DURING.has(active.name)) return false
+    this.nextLook = Date.now() + TorchMode.LOOK_MS
+    this.plan = torchPlan(this.ctx)
+    return !!this.plan
+  }
+
+  async run (token) {
+    const { bot, agents } = this.ctx
+    const plan = this.plan
+    this.plan = null
+    this.until = Date.now() + TorchMode.MAX_MS
+    this.nextLook = Date.now() + TorchMode.RETRY_MS
+    try {
+      const made = await topUpTorches(this.ctx, token, plan)
+      if (made > 0) agents.log(`${bot.username} made ${made} torches from spare coal`)
+    } catch (err) {
+      if (!token.cancelled) agents.log(`${bot.username} torches: ${err.message}`)
+    }
+    return token.cancelled ? 'cancelled' : 'done'
+  }
+
+  describe () { return 'making torches' }
 }
 
 // What the food in the bag and the bar above the sprint limit can pay for. The safe minimum for a dig is the way home from
@@ -1295,6 +1418,7 @@ class GatherMode extends JobMode {
       bot.pathfinder.setMovements(t.kind === 'wood' ? agents.noDigMoves(bot) : agents.digMoves(bot))
       const r = await gatherKind(bot, t.kind, left, token, {
         ...foodHooks(this.ctx),
+        master: () => ownerEntity(this.ctx)?.position || null,
         ...(resumed ? { toolCtx: (t.toolCtx ??= {}) } : {}),  // kept on the task, so a fight never makes two pickaxes
         digMoves: () => agents.digMoves(bot),
         say: text => agents.event(bot, 'normal', 'gather-note', text, 30000),
@@ -1509,6 +1633,7 @@ function makeModes (ctx) {
     new ComeMode(ctx),
     new ResupplyMode(ctx),
     new CraftMode(ctx),
+    new TorchMode(ctx),
     new GatherMode(ctx),
     new BuildMode(ctx),
     new MineMode(ctx),
@@ -1543,4 +1668,4 @@ function makeModes (ctx) {
   return manager
 }
 
-module.exports = { makeModes, foodBeforeLongDig, CraftMode, GatherMode, KillMode, GuardMode, GuardPostMode, RetreatMode, AvoidMode, MobFightMode, DefendMode, EscapeMode, FindFoodMode, ResupplyMode, EatMode, MineMode, BuildMode, FarmMode, ExploreMode, FollowMode, ComeMode, GiveMode, IdleMode, KEEP, jobHooks, foodHooks, planFood }
+module.exports = { makeModes, foodBeforeLongDig, TorchMode, CraftMode, GatherMode, KillMode, GuardMode, GuardPostMode, RetreatMode, AvoidMode, MobFightMode, DefendMode, EscapeMode, FindFoodMode, ResupplyMode, EatMode, MineMode, BuildMode, FarmMode, ExploreMode, FollowMode, ComeMode, GiveMode, IdleMode, KEEP, jobHooks, foodHooks, planFood }

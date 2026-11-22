@@ -27,9 +27,9 @@ const WAY_PATH = 14        // walking steps to reach it: a fence or a hole makes
 const WAY_LEVEL = 1.5      // blocks above or below: one step, never down into a ravine it has to climb out of
 const WAY_LEASH = 14       // an animal that runs this far from where the detour began is let go
 const WAY_MS = 8000
-// It stops at 2 full bars, counting what it can cook at its cooked value: about 5 steaks, 3 cows. Above the 24 point
-// reserve on purpose, these are the cheap points it picks up while passing by
-const WAY_RESERVE = 40
+// It stops at 6 full bars, counting what it can cook at its cooked value: about 15 steaks. Well above the 24 point
+// reserve on purpose, so a bag of bread is no reason to walk past a close animal
+const WAY_RESERVE = 120
 const WAY_PATH_MS = 40
 const WAY_CHECK_MS = 1000  // how long the answer of one path search holds for one animal
 const SUPPLY_MS = 1000     // cooking options read the world, so the food count is worked out at most this often
@@ -236,9 +236,29 @@ function canSee (bot, e) {
   return true
 }
 
+// What hunting did for one bot, for its log: animals seen in sight within WAY_RADIUS during a job (each counted once),
+// hunts started and how they ended
+function huntCounts (bot) {
+  return bot._agentsHunts || (bot._agentsHunts = { seen: new Set(), seenAt: 0, started: 0, killed: 0, gaveUp: 0, cancelled: 0 })
+}
+
+function huntText (bot) {
+  const c = huntCounts(bot)
+  return `hunts: ${c.seen.size} seen, ${c.started} started, ${c.killed} killed, ${c.gaveUp} gave up, ${c.cancelled} cancelled`
+}
+
+function noteSeen (bot) {
+  const c = huntCounts(bot)
+  const now = Date.now()
+  if (now < c.seenAt) return
+  c.seenAt = now + WAY_CHECK_MS
+  for (const e of animalsNear(bot, WAY_RADIUS, { sight: true })) c.seen.add(e.id)
+}
+
 // The animal worth a small detour right now, or null: grown, in sight, within WAY_RADIUS on about its own level, not in
 // water, with a short walk to it, and only while the bag is under WAY_RESERVE
 function animalOnTheWay (bot, work = null) {
+  noteSeen(bot)
   if (foodSupply(bot, work).total >= WAY_RESERVE) return null
   const me = bot.entity.position
   const checks = bot._agentsWayChecks || (bot._agentsWayChecks = new Map())
@@ -285,7 +305,7 @@ async function gatherFood (bot, token, log = () => {}, { radius = GATHER_RADIUS,
     }
     const r = await huntOne(bot, animal, token, log)
     if (r !== 'killed' && !token.cancelled) gaveUpOn(bot).set(animal.id, Date.now() + GIVE_UP_MS)
-    log(`${bot.username} hunted a ${animal.name}: ${r}`)
+    log(`${bot.username} hunted a ${animal.name}: ${r} (${huntText(bot)})`)
   }
   return foodPointsCarried(bot) - before
 }
@@ -305,6 +325,8 @@ async function huntOne (bot, animal, token, log, { leash = null, ms = 20000, flo
   const known = flow ? new Set(Object.values(bot.entities).filter(e => e.name === 'item').map(e => e.id)) : null
   const chase = new goals.GoalFollow(animal, 1.5)
   bot.pathfinder.setGoal(chase, true)
+  const counts = huntCounts(bot)
+  counts.started++
   const until = Date.now() + ms
   let result = `gave up after ${Math.round(ms / 1000)} s`
   let closest = Infinity
@@ -341,7 +363,11 @@ async function huntOne (bot, animal, token, log, { leash = null, ms = 20000, flo
     // only its own goal: a mode that took over (running from a creeper) has set its own by now
     if (bot.pathfinder.goal === chase) bot.pathfinder.setGoal(null)
   }
-  if (result !== 'killed') return result
+  if (result !== 'killed') {
+    counts[token.cancelled ? 'cancelled' : 'gaveUp']++
+    return token.cancelled ? 'cancelled' : result
+  }
+  counts.killed++
   // the drops
   const spot = animal.position.clone()
   if (flow) {
@@ -353,20 +379,7 @@ async function huntOne (bot, animal, token, log, { leash = null, ms = 20000, flo
     }
     return result
   }
-  await sleep(400)
-  for (let i = 0; i < 4 && !token.cancelled; i++) {
-    const drop = Object.values(bot.entities).find(e => e.name === 'item' && e.position.distanceTo(spot) < 4)
-    if (!drop) break
-    try {
-      await Promise.race([
-        bot.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.6)),
-        sleep(5000).then(() => { throw new Error('too slow') })
-      ])
-    } catch {
-      if (!token.cancelled) bot.pathfinder.setGoal(null)
-      break
-    }
-  }
+  await require('./pickup').pickUpDrops(bot, spot, token, { settleMs: 400 })
   return result
 }
 
@@ -399,4 +412,4 @@ async function restockFood (bot, token, { want, farms = () => [], log = () => {}
   return points()
 }
 
-module.exports = { foods, readyFoods, foodInfo, foodPointsCarried, foodSupply, supplyText, animalOnTheWay, huntOnTheWay, WAY_RADIUS, WAY_RESERVE, needsFood, eat, eatItem, feed, foodDecision, gatherFood, huntOne, animalsNear, gaveUpOn, canSee, restockFood, isBaby, HUNGRY, LOW_HEALTH, ENOUGH_FOOD, ANIMALS, GIVE_UP_MS }
+module.exports = { foods, readyFoods, foodInfo, foodPointsCarried, foodSupply, supplyText, animalOnTheWay, huntOnTheWay, huntCounts, huntText, WAY_RADIUS, WAY_RESERVE, needsFood, eat, eatItem, feed, foodDecision, gatherFood, huntOne, animalsNear, gaveUpOn, canSee, restockFood, isBaby, HUNGRY, LOW_HEALTH, ENOUGH_FOOD, ANIMALS, GIVE_UP_MS }

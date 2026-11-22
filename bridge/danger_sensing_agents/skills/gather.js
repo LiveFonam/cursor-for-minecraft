@@ -7,8 +7,10 @@
 const { Vec3 } = require('vec3')
 const { goals } = require('mineflayer-pathfinder')
 const { goTo } = require('./move')
+const { digHazard } = require('../hazards')
 const { sleep } = require('./human')
 const { pickTool, stepInto, walkOntoDrops } = require('./mine')
+const { pickUpDrops } = require('./pickup')
 const { canFlow, preAim, seesBlock, walkCells } = require('./motion')
 const { WOODS } = require('./craft')
 
@@ -79,15 +81,7 @@ function visible (bot, names, avoid, { leaves = false, logs = false } = {}) {
 
 async function collectDrops (bot, pos, token) {
   if (canFlow(bot)) return walkOntoDrops(bot, pos, token || {})
-  await sleep(300)
-  for (let i = 0; i < 4 && !token?.cancelled; i++) {
-    const drop = Object.values(bot.entities || {}).find(e => e.name === 'item' && e.position.distanceTo(pos) < 4)
-    if (!drop) return
-    try {
-      await goTo(bot, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.6), token, 5000)
-    } catch { return }
-    await sleep(200)
-  }
+  await pickUpDrops(bot, pos, token, { settleMs: 300 })
 }
 
 async function digOne (bot, pos, token) {
@@ -120,19 +114,31 @@ async function staircase (bot, item, want, token, log) {
   let feet = start
   let dug = 0
   const walked = [start]
-  for (let step = 0; step < 24 && !token?.cancelled && count(bot, item) < want; step++) {
+  // a cut block's drop reaches the bag a moment later, so what was cut counts as well as what is held
+  const yields = new Set(sourcesFor(item)?.blocks || [])
+  const before = count(bot, item)
+  let cut = 0
+  let lastCut = null
+  const enough = () => Math.max(count(bot, item), before + cut) >= want
+  for (let step = 0; step < 24 && !token?.cancelled && !enough(); step++) {
     const next = feet.offset(dx, -1, dz)
     for (const p of [next.offset(0, 2, 0), next.offset(0, 1, 0), next]) {
       const b = bot.blockAt(p)
       if (!b) return dug
       if (['lava', 'water'].includes(b.name) || ['lava', 'water'].includes(bot.blockAt(p.offset(0, 1, 0))?.name)) return dug
       if (b.boundingBox === 'empty' && b.name !== 'short_grass') continue
+      if (yields.has(b.name) && enough()) break
       const pick = pickTool(bot, b)
       if (pick.error) return dug
       if (pick.item && bot.heldItem?.type !== pick.item.type) await bot.equip(pick.item, 'hand')
       await bot.dig(b, true)
       dug++
+      if (yields.has(b.name)) {
+        cut++
+        lastCut = p
+      }
     }
+    if (enough()) break
     const floor = bot.blockAt(next.offset(0, -1, 0))
     if (!floor || floor.boundingBox !== 'block') return dug
     try {
@@ -144,6 +150,10 @@ async function staircase (bot, item, want, token, log) {
     }
     feet = next
     walked.push(next)
+  }
+  if (lastCut && enough() && !token?.cancelled) {
+    await collectDrops(bot, lastCut.offset(0.5, 0.5, 0.5), token)
+    for (let i = 0; i < 20 && count(bot, item) < want && !token?.cancelled; i++) await sleep(50)
   }
   // back up the stairs in one walk, the pathfinder if that fails
   if (canFlow(bot) && walked.length > 1) {
@@ -162,8 +172,46 @@ function count (bot, name) {
   return bot.inventory.items().filter(i => i.name === name).reduce((n, i) => n + i.count, 0)
 }
 
+// Where to walk next to look for a source: 12 to 22 blocks off, within range of where it started. The early walks take
+// the best of three directions for staying near the master, the later ones are free so a far source is still found
+function wanderPoint (pos, home, { master = null, early = true, range = 48, random = Math.random } = {}) {
+  const pick = () => {
+    const angle = random() * Math.PI * 2
+    const d = 12 + random() * 10
+    let x = pos.x + Math.cos(angle) * d
+    let z = pos.z + Math.sin(angle) * d
+    const off = Math.hypot(x - home.x, z - home.z)
+    if (off > range) { x = home.x + (x - home.x) * range / off; z = home.z + (z - home.z) * range / off }
+    return { x, z }
+  }
+  const first = pick()
+  if (!master || !early) return first
+  const toMaster = p => Math.hypot(p.x - master.x, p.z - master.z)
+  return [pick(), pick()].reduce((best, p) => toMaster(p) < toMaster(best) ? p : best, first)
+}
+
+// The spots it can see, the cheapest first once the way back to the master counts for half
+function preferNearMaster (spots, bot, master) {
+  if (!master) return spots
+  const cost = p => p.distanceTo(bot.entity.position) + 0.5 * Math.hypot(p.x - master.x, p.z - master.z)
+  return spots.slice().sort((a, b) => cost(a) - cost(b))
+}
+
+// The farthest and average distance from the master over a run's path, in whole blocks
+function masterDistance (path, master) {
+  if (!master || !path?.length) return { farthest: null, average: null }
+  let farthest = 0
+  let sum = 0
+  for (const p of path) {
+    const d = Math.hypot(p.x - master.x, p.z - master.z)
+    if (d > farthest) farthest = d
+    sum += d
+  }
+  return { farthest: Math.round(farthest), average: Math.round(sum / path.length) }
+}
+
 // Gets want more of item. Returns how many it got. avoid(pos) protects the owner's builds and the site
-async function gather (bot, item, want, token, { log = () => {}, say = () => {}, avoid = () => false, mine = null } = {}) {
+async function gather (bot, item, want, token, { log = () => {}, say = () => {}, avoid = () => false, mine = null, master = null } = {}) {
   const src = sourcesFor(item)
   if (!src) return 0
   if (src.pickaxe && !bot.inventory.items().some(i => /_pickaxe$/.test(i.name))) {
@@ -176,10 +224,11 @@ async function gather (bot, item, want, token, { log = () => {}, say = () => {},
   let broken = 0
   let wanders = 0
   const failed = new Set()
-  const skip = p => avoid(p) || failed.has(p.toString())
+  // a block that holds back lava is not worth walking up to
+  const skip = p => avoid(p) || failed.has(p.toString()) || !!digHazard(bot, bot.blockAt(p))
   const canceled = new Map()
   while (count(bot, item) < target && !token?.cancelled && broken < src.cap) {
-    const spots = visible(bot, src.blocks, skip, { leaves: src.leaves, logs: LOGS.includes(item) })
+    const spots = preferNearMaster(visible(bot, src.blocks, skip, { leaves: src.leaves, logs: LOGS.includes(item) }), bot, master?.())
     if (spots.length) {
       try {
         if (await digOne(bot, spots[0], token)) broken++
@@ -209,12 +258,7 @@ async function gather (bot, item, want, token, { log = () => {}, say = () => {},
     if (wanders === 0) log(`${bot.username} sees no ${item} source it can reach within ${SEE} blocks, walking to look`)
     if (wanders++ >= WANDERS) break
     // walk a little way and look again, staying within 48 blocks of where it started
-    const angle = Math.random() * Math.PI * 2
-    const d = 12 + Math.random() * 10
-    let x = bot.entity.position.x + Math.cos(angle) * d
-    let z = bot.entity.position.z + Math.sin(angle) * d
-    const off = Math.hypot(x - home.x, z - home.z)
-    if (off > 48) { x = home.x + (x - home.x) * 48 / off; z = home.z + (z - home.z) * 48 / off }
+    const { x, z } = wanderPoint(bot.entity.position, home, { master: master?.(), early: wanders <= WANDERS / 2 })
     try {
       await goTo(bot, new goals.GoalNearXZ(x, z, 3), token, 20000)
     } catch (err) {
@@ -250,4 +294,4 @@ async function fillBuckets (bot, want, token, { avoid = () => false } = {}) {
   return filled
 }
 
-module.exports = { gather, sourcesFor, isNaturalLog, isNaturalLeaves, visible, collectDrops, fillBuckets, count, LOGS }
+module.exports = { gather, wanderPoint, preferNearMaster, masterDistance, sourcesFor, isNaturalLog, isNaturalLeaves, visible, collectDrops, fillBuckets, count, LOGS }

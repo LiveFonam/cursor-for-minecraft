@@ -26,6 +26,7 @@ const { Vec3 } = require('vec3')
 const { isEnemy, dist } = require('./targets')
 const { foodPointsCarried, foodSupply, supplyText, HUNGRY } = require('./skills/food')
 const { FOOD_EMERGENCY, FOOD_RECOVERED } = require('./skills/food_plan')
+const { sealedOff } = require('./hazards')
 
 const SENSE_RADIUS = 24       // blocks, mobs further out are not a danger yet (except long range shooters)
 const SCAN_RADIUS = 64        // what it looks at at all (a ghast shoots from 50)
@@ -39,6 +40,9 @@ const FLEE_CLEAR = 16
 const OVERWHELM = 8           // total score that is too much to fight below OVERWHELM_HP health
 const OVERWHELM_HP = 14
 const BOSS_RADIUS = 32        // a warden or a wither this close: leave
+const SEAL_KEEP_MS = 1000     // how long the answer on a walled off mob is kept
+const SEAL_RADIUS = 16        // a mob further off than this is not checked for a wall
+const SEAL_SEARCHES = 8       // how many mobs one look may check
 const CREEPER_AVOID = 6       // a creeper this close: back off
 const CREEPER_SAFE = 9        // until it is this far
 const CREEPER_PATIENCE_MS = 15000  // backing off from the same creeper this long: fight it instead
@@ -47,6 +51,7 @@ const CREEPER_HOLD_MS = 6000  // a back off that began holds this long before th
 const UNREACHABLE_MS = 20000  // fighting the same enemy this long without getting close: it is out of reach
 const UNREACHABLE_FOR_MS = 60000
 const PROVOKED_MS = 30000     // a neutral mob or player that hit us stays an enemy this long
+const ENDERMAN_ANGRY = 17     // entity metadata in 1.21: the enderman's flag for having a target
 const HURT_MS = 3000          // damage this recent counts as being under attack
 const APPROACH_SPEED = 0.5    // blocks per second toward us that counts as coming at us
 const LOOK_ANGLE = Math.PI / 6
@@ -219,6 +224,8 @@ function onFire (bot) {
   return !!((bot.entity.metadata?.[0] ?? 0) & 0x01)
 }
 
+const angryEnderman = e => e.name === 'enderman' && e.metadata?.[ENDERMAN_ANGRY] === true
+
 class DangerAssessor {
   // reserve: the food points to carry right now, a number or a function (a long job raises it, food_plan.js).
   // Never below FOOD_RESERVE. netFights(entity): whether the trained mob network would take this mob right now
@@ -245,6 +252,7 @@ class DangerAssessor {
     this.provoked = new Map()     // id to until when a neutral mob or player counts as an enemy
     this.unreachable = new Map()  // id to until when it is out of reach
     this.creeperFight = new Map() // id to until when a creeper is fought instead of avoided
+    this.sealCache = new Map()    // id to the last answer on whether it has an open way to the bot
     this.lastHealth = this.bot.health
     this.hurtAt = 0
     this.focusId = null
@@ -300,6 +308,7 @@ class DangerAssessor {
       dangers.push(this.scoreEntity(e, d, spec, { me, eye, vuln, guardOwner, now }))
     }
     for (const id of this.seen.keys()) if (!present.has(id)) this.seen.delete(id)
+    for (const id of this.sealCache.keys()) if (!present.has(id)) this.sealCache.delete(id)
     const foodEmergency = this.decideFoodEmergency()
     dangers.push(...this.selfDangers(now, foodEmergency))
     dangers.sort((a, b) => b.score - a.score)
@@ -316,6 +325,12 @@ class DangerAssessor {
     report.resupply = dangers.find(x => x.response === 'resupply') || null
     report.foodEmergency = foodEmergency
     report.flee = this.decideFlee(mobs, report.total)
+    // the run goes away from a creeper inside its blast before anything nearer: a retreat that only watched the closest
+    // mob ran past a creeper at 3 health. A boss stays the thing to run from
+    if (report.flee && report.flee.from?.kind !== 'boss') {
+      const blast = mobs.filter(x => x.kind === 'creeper' && x.distance <= CREEPER_AVOID).sort((a, b) => a.distance - b.distance)[0]
+      if (blast) report.flee = { from: blast, reason: `${report.flee.reason}, creeper ${blast.distance.toFixed(1)} blocks away` }
+    }
     report.avoid = report.flee ? null : this.decideAvoid(dangers, now)
     report.fight = report.flee || report.avoid ? null : this.decideFight(mobs, now)
     if (!report.fight) this.engaged = null
@@ -384,10 +399,17 @@ class DangerAssessor {
     }
 
     const hitMe = now - (this.hitBy.get(id) || -Infinity) <= HURT_MS
+    // the game flags an enderman that has a target. Without this it counts as harmless until its first hit lands
+    if (angryEnderman(e)) this.provoked.set(id, now + PROVOKED_MS)
     const provoked = this.provoked.has(id)
     const neutral = spec.neutral && !provoked
     if (hitMe) reasons.push('hit me')
-    if (neutral) {
+    // under solid ground with no open way up and no shot: known about, but nothing to answer yet
+    const sealed = !hitMe && !(spec.kind === 'ranged' && los) && !spec.flier && this.isSealed(e, d, now)
+    if (sealed) {
+      score *= 0.1
+      reasons.push('sealed off below')
+    } else if (neutral) {
       score *= 0.2
       reasons.push(e.type === 'player' ? 'a player who has not attacked' : 'neutral, not angry')
     } else {
@@ -402,12 +424,32 @@ class DangerAssessor {
       spec,
       distance: d,
       score,
-      active: !neutral && score > 0,
+      active: !neutral && !sealed && score > 0,
+      sealed,
       forOwner,
       hitMe,
       response: 'watch',
       reason: reasons.join(', ')
     }
+  }
+
+  // sealedOff walks the cells around the two of them, so its answer is kept until either moves, the block being dug
+  // changes, or SEAL_KEEP_MS passes (a wall can be opened by someone else)
+  isSealed (e, d, now) {
+    const bot = this.bot
+    if (d > SEAL_RADIUS || e.position.y > bot.entity.position.y - 2) return false
+    const at = p => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
+    const dig = bot.targetDigBlock?.position
+    const key = `${at(bot.entity.position)}|${at(e.position)}|${dig ? at(dig) : ''}`
+    const kept = this.sealCache.get(e.id)
+    if (kept && kept.key === key && now - kept.at < SEAL_KEEP_MS) return kept.sealed
+    // a few searches a look at most, the rest keep their last answer until their turn: a crowd must not stall the tick
+    if (this.sealLook !== now) { this.sealLook = now; this.sealSearches = 0 }
+    if (this.sealSearches >= SEAL_SEARCHES) return kept?.sealed ?? false
+    this.sealSearches++
+    const sealed = sealedOff(bot, e)
+    this.sealCache.set(e.id, { key, at: now, sealed })
+    return sealed
   }
 
   // The bot's own body and bag
@@ -541,7 +583,7 @@ class DangerAssessor {
       this.creeperFight.set(x.entity.id, now + CREEPER_FIGHT_MS)
       if (backingOff) this.avoiding = null
     }
-    const creepers = dangers.filter(x => x.kind === 'creeper' && !this.creeperFight.has(x.entity.id))
+    const creepers = dangers.filter(x => x.kind === 'creeper' && !x.sealed && !this.creeperFight.has(x.entity.id))
     const cur = this.avoiding && creepers.find(x => x.entity.id === this.avoiding.id)
     if (cur && cur.distance < CREEPER_SAFE) {
       // in a dead end there is no backing off, and a hit is what pushes it away before its fuse ends
