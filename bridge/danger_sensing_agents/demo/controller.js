@@ -551,7 +551,7 @@ class DemoController {
       await this.finishDuel(run, 'crashed')
       return
     }
-    run.pillars = scene.pillarLayout(this.stage, this.rng)
+    run.pillars = this.s.pillars ? scene.pillarLayout(this.stage, this.rng) : []
     try {
       for (const c of scene.pillarCommands(this.stage, run.pillars)) await this.sendLoaded(c)
     } catch (err) {

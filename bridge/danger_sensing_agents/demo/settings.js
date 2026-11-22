@@ -13,6 +13,7 @@
 //   DEMO_STAGE           x,y,z of the scene, feet level (default: where the agent stands when the demo starts)
 //   DEMO_METRICS         the demo's job log. Every death goes to deaths.jsonl beside it (default runs/demo/metrics.jsonl)
 //   DEMO_FIGHT_SECONDS   longest 1v1 (default 180)
+//   DEMO_PILLARS         1 puts random pillars in the 1v1 arena. Off by default, because the fighter's client cannot see them
 //   DEMO_CUE_MOB         seconds into a task before a mob is sent at the agent, 0 for never (default 60)
 //   DEMO_CUE_ANIMAL      seconds into a task before an animal appears by the agent, 0 for never (default 120)
 
@@ -76,6 +77,7 @@ function loadSettings (env = process.env, config = loadConfig({ env, ownerRequir
     metrics: path.resolve(SOURCE_ROOT, env.DEMO_METRICS || path.join('runs', 'demo', 'metrics.jsonl')),
     neuronsPort: wholeNumber(env, 'DEMO_NEURONS_PORT', 8770),
     fightSeconds: wholeNumber(env, 'DEMO_FIGHT_SECONDS', 180),
+    pillars: env.DEMO_PILLARS === '1',
     cueMobSeconds: wholeNumber(env, 'DEMO_CUE_MOB', 60),
     cueAnimalSeconds: wholeNumber(env, 'DEMO_CUE_ANIMAL', 120),
     host: config.host,

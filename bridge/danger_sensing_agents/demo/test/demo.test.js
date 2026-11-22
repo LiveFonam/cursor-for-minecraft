@@ -663,8 +663,20 @@ test('scene: a pillar is solid to head height, and clearing takes out exactly wh
   assert.ok(scene.PILLAR_HEIGHT >= 3)
 })
 
+test('controller: a fight has no pillars unless they are asked for, and starts 16 blocks apart', async () => {
+  const r = duelRig()
+  await startDuel(r, r.deaths)
+  assert.deepEqual(r.c.duelRun.pillars, [])
+  assert.ok(!r.rcon.sent.some(c => c.includes(scene.PILLAR_BLOCK)))
+  const spots = scene.duelSpots(STAGE)
+  assert.equal(spots.fighter.x - spots.player.x, 16)
+  assert.equal(loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_PILLARS: '1' }, CONFIG).pillars, true)
+  assert.equal(loadSettings({ DEMO_PLAYER: 'Viewer' }, CONFIG).pillars, false)
+})
+
 test('controller: a fight places its pillars before the kits and clears them when it ends', async () => {
   const r = duelRig()
+  r.c.s.pillars = true
   await startDuel(r, r.deaths)
   const pillars = r.c.duelRun.pillars
   assert.ok(pillars.length === 2 || pillars.length === 4)

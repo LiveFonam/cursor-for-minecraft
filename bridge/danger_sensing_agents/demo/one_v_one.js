@@ -10,6 +10,7 @@
 //   ONE_V_ONE_PORT          the game port (default 25570)
 //   ONE_V_ONE_CONSOLE_PORT  the console port (default 25571)
 //   ONE_V_ONE_JOIN_SECONDS  how long to wait for the player (default 600)
+//   ONE_V_ONE_STAY          1 keeps the server up: a new match follows each one, and it waits for the player to come back
 //
 // The fighter's settings are the walkthrough's, listed in settings.js. The Minecraft EULA is yours to accept, so this
 // never writes eula.txt and does not start without eula=true in it.
@@ -37,6 +38,7 @@ const LAST_WORD_MS = 5000
 const READY_SECONDS = 180
 const STOP_SECONDS = 30
 const WATCH_MS = 2000
+const MOST_FAILED_MATCHES = 3   // with the player still there, in a row, before a server that stays up gives up
 const EULA_LINK = 'https://aka.ms/MinecraftEULA'
 const FLAT_WORLD = JSON.stringify({
   biome: 'minecraft:plains',
@@ -73,7 +75,8 @@ function serverOptions (env = process.env) {
     memory,
     gamePort,
     consolePort,
-    joinSeconds
+    joinSeconds,
+    stay: env.ONE_V_ONE_STAY === '1'
   }
 }
 
@@ -346,39 +349,48 @@ async function main (env = process.env) {
 
     log(`join localhost:${opts.gamePort} as ${settings.player}. Waiting up to ${opts.joinSeconds} seconds.`)
     const spot = scene.duelSpots(STAGE).player
-    let joined = false
-    for (let i = 0; i < opts.joinSeconds && !joined; i++) {
-      joined = isOnline(await controller.send('list'), settings.player)
-      if (!joined) await pause(1000)
+    let failed = 0
+    for (;;) {
+      let joined = false
+      for (let i = 0; (opts.stay || i < opts.joinSeconds) && !joined; i++) {
+        joined = isOnline(await controller.send('list'), settings.player)
+        if (!joined) await pause(1000)
+      }
+      if (!joined) throw new Error(`${settings.player} did not join in ${opts.joinSeconds} seconds`)
+      await controller.sendAll([`gamemode adventure ${settings.player}`, `clear ${settings.player}`,
+        `tp ${settings.player} ${spot.x} ${spot.y} ${spot.z} ${spot.yaw} 0`])
+      await pause(BETWEEN_FIGHTS_MS)
+
+      // he left: the fight in progress stops, and that ends the match
+      watcher = setInterval(async () => {
+        const run = controller.duelRun
+        if (!run || isOnline(await controller.send('list'), settings.player)) return
+        if (controller.duelRun !== run) return
+        log(`${settings.player} left`)
+        run.stopped = true
+        run.child.stop()
+      }, WATCH_MS)
+
+      const { score, result, fights } = await playMatch({
+        fight: () => fightOnce(controller),
+        tell: text => controller.tell(text),
+        wait: pause,
+        fighterName: settings.fighterName
+      })
+      clearInterval(watcher)
+      watcher = null
+      await controller.tell(`${LAST_WORDS[result]} You ${score.player}, ${settings.fighterName} ${score.fighter}.`)
+      log(`match over after ${fights} fights: ${result}, you ${score.player}, ${settings.fighterName} ${score.fighter}`)
+      await pause(LAST_WORD_MS)
+      if (!opts.stay) {
+        await close()
+        return result === 'off' ? 1 : 0
+      }
+      const stillHere = isOnline(await controller.send('list'), settings.player)
+      failed = result === 'off' && stillHere ? failed + 1 : 0
+      if (failed >= MOST_FAILED_MATCHES) throw new Error(`The fight could not run ${failed} times in a row`)
+      if (stillHere) await controller.tell('A new match starts in a few seconds.')
     }
-    if (!joined) throw new Error(`${settings.player} did not join in ${opts.joinSeconds} seconds`)
-    await controller.sendAll([`gamemode adventure ${settings.player}`, `clear ${settings.player}`,
-      `tp ${settings.player} ${spot.x} ${spot.y} ${spot.z} ${spot.yaw} 0`])
-    await pause(BETWEEN_FIGHTS_MS)
-
-    // he left: the fight in progress stops, and that ends the match
-    watcher = setInterval(async () => {
-      const run = controller.duelRun
-      if (!run || isOnline(await controller.send('list'), settings.player)) return
-      if (controller.duelRun !== run) return
-      log(`${settings.player} left`)
-      run.stopped = true
-      run.child.stop()
-    }, WATCH_MS)
-
-    const { score, result, fights } = await playMatch({
-      fight: () => fightOnce(controller),
-      tell: text => controller.tell(text),
-      wait: pause,
-      fighterName: settings.fighterName
-    })
-    clearInterval(watcher)
-    watcher = null
-    await controller.tell(`${LAST_WORDS[result]} You ${score.player}, ${settings.fighterName} ${score.fighter}.`)
-    log(`match over after ${fights} fights: ${result}, you ${score.player}, ${settings.fighterName} ${score.fighter}`)
-    await pause(LAST_WORD_MS)
-    await close()
-    return result === 'off' ? 1 : 0
   } catch (err) {
     log(err.message)
     await close()
