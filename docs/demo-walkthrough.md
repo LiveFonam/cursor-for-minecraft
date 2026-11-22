@@ -28,6 +28,9 @@ These change the walkthrough below. If you pick this up in another session, this
 10. Endermen can bridge a moat with real blocks from nearby, so zombies can cross and attack the base.
 11. The agent can't see ores through walls. It only knows about ore with a face it can actually see.
 12. Claude Haiku reads every plain English request, and each call logs the tokens it used.
+13. If more iron is right in front of the agent than you asked for, it takes that easy iron too, up to 12 per job. It never searches or detours for the extra.
+14. If it spots diamonds on a job that doesn't need them, it doesn't dig them. It saves the spot, tells you the coordinates once, asks if you want them, and keeps working.
+15. The corner of the screen shows how far the agent is from you, how long it has been gone on the current job, its ready and raw food, its building blocks, its tools with durability, and its other items.
 
 ## Start it
 
