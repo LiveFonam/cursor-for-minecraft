@@ -9,7 +9,6 @@
 //   DEMO_FIGHTER_CLIENT  the fighter client file (default bridge/fighter.js)
 //   DEMO_POLICY          the 1v1 policy loader file (default demo/neuron_policy.py, the fighter with its live neuron screen)
 //   DEMO_DUEL            a module with its own spawnDuel, for a fighter that brings its own client and loader
-//   DEMO_GUN_RANGE       blocks from which the 1v1 fighter always takes out its crossbow (default 7)
 //   DEMO_MELEE_RULES     1 turns on the experimental forced axe aim and crit jumps, off by default
 //   DEMO_NEURONS_PORT    the port of the neuron screen on this machine, 0 for no screen (default 8770)
 //   DEMO_PYTHON          the Python that runs the policy loader

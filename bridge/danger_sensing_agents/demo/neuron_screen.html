@@ -6,13 +6,13 @@
 <title>Fighter Neurons</title>
 <style>
   :root {
-    --surface: #1a1a19;
-    --raised: #262624;
-    --rule: #3a3a37;
-    --ink: #f0efec;
-    --soft: #c3c2b7;
-    --excite: #3f93e0;
-    --inhibit: #e8574f;
+    --surface: #1e1e1e;
+    --raised: #2a2a2a;
+    --rule: #333333;
+    --ink: #ececec;
+    --soft: #a2a2a2;
+    --excite: #22e07a;
+    --inhibit: #22e07a;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -80,6 +80,7 @@
   #tip ul { margin: 0; padding: 0; list-style: none; color: var(--ink); }
   #tip li { overflow-wrap: anywhere; }
   #tip .none { color: var(--soft); }
+  .ramp { background: linear-gradient(90deg, rgb(38, 38, 38), rgb(255, 255, 255)) !important; }
 </style>
 </head>
 <body>
@@ -100,8 +101,7 @@
   </div>
   <div class="legend" aria-label="Legend">
     <span class="key">Activation, low <span class="ramp"></span> high</span>
-    <span class="key"><span class="stroke excite"></span>Excites</span>
-    <span class="key"><span class="stroke inhibit"></span>Inhibits</span>
+    <span class="key"><span class="stroke excite"></span>Strongest live links</span>
     <span class="key"><span class="widths"><i style="height:1px"></i><i style="height:2px"></i><i style="height:4px"></i></span>Thicker is stronger</span>
   </div>
 </header>
@@ -115,9 +115,9 @@
 // One read-only view of the fighter. Frames are drawn when they arrive and old ones are dropped, so the page never holds
 // up the fight. All text from the server goes in through textContent or the canvas.
 
-const INK = '#f0efec'
-const SOFT = '#c3c2b7'
-const RULE = '#3a3a37'
+const INK = '#ececec'
+const SOFT = '#a2a2a2'
+const RULE = '#333333'
 const EXCITE = '63, 147, 224'
 const INHIBIT = '232, 87, 79'
 const RAMP = [[36, 52, 66], [38, 88, 140], [63, 147, 224], [174, 220, 255]]
@@ -137,11 +137,9 @@ const tip = el('tip')
 const state = { meta: null, frame: null, peaks: { 1: [], 2: [] }, levels: { 1: [], 2: [] }, hover: null, pointer: null, layout: null, lastFrame: 0, stream: null, queued: false }
 
 function shade (value) {
-  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) * (RAMP.length - 1)
-  const at = Math.min(RAMP.length - 2, Math.floor(v))
-  const t = v - at
-  const c = RAMP[at].map((from, i) => Math.round(from + (RAMP[at + 1][i] - from) * t))
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
+  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
+  const g = Math.round(38 + 217 * Math.pow(v, 1.6))
+  return `rgb(${g}, ${g}, ${g})`
 }
 
 const neuronsOf = layer => state.meta?.neurons?.[String(layer)] || []
@@ -215,21 +213,17 @@ function drawLines (frame) {
   const { xs, radius } = state.layout
   const lines = [...(frame.lines || [])].sort((p, q) => Math.abs(p[3]) - Math.abs(q[3]))
   const hover = state.hover
+  ctx.lineCap = 'butt'
   for (const line of lines) {
     const [gap, a, b, s] = line
-    const power = Math.pow(Math.min(1, Math.abs(s)), 1.6)
-    const on = !hover || touches(line, hover)
-    const alpha = on ? 0.1 + 0.85 * power : 0.03
-    const x1 = xs[gap] + radius[gap] + 1
-    const x2 = xs[gap + 1] - radius[gap + 1] - 1
-    const y1 = nodeY(gap, a)
-    const y2 = nodeY(gap + 1, b)
-    const mid = (x1 + x2) / 2
+    const v = Math.min(1, Math.abs(s))
+    const on = hover && touches(line, hover)
+    const alpha = on ? 0.3 + 0.7 * v : (0.05 + 0.93 * v * v) * (hover ? 0.28 : 1)
     ctx.beginPath()
-    ctx.moveTo(x1, y1)
-    ctx.bezierCurveTo(mid, y1, mid, y2, x2, y2)
-    ctx.strokeStyle = `rgba(${s >= 0 ? EXCITE : INHIBIT}, ${alpha.toFixed(3)})`
-    ctx.lineWidth = (hover && on ? 0.8 : 0.45) + 3.4 * power
+    ctx.moveTo(xs[gap], nodeY(gap, a))
+    ctx.lineTo(xs[gap + 1], nodeY(gap + 1, b))
+    ctx.strokeStyle = `rgba(34, 224, 122, ${alpha.toFixed(3)})`
+    ctx.lineWidth = on ? 0.8 + 2.4 * v : 0.55 + 2.5 * v * v
     ctx.stroke()
   }
 }
@@ -240,8 +234,8 @@ function drawNode (x, y, r, value, col, i) {
   ctx.arc(x, y, r, 0, Math.PI * 2)
   ctx.fillStyle = shade(value)
   ctx.fill()
-  ctx.lineWidth = hovered ? 2 : 1
-  ctx.strokeStyle = hovered ? INK : RULE
+  ctx.lineWidth = hovered ? 2.4 : 1.2
+  ctx.strokeStyle = hovered ? '#22e07a' : '#d6d6d6'
   ctx.stroke()
 }
 
@@ -281,7 +275,7 @@ function drawClusters (layer) {
     const text = fitText(`${c.name} (${c.to - c.from + 1})`, room)
     const tx = x + side * 5
     const wide = ctx.measureText(text).width
-    ctx.fillStyle = '#1a1a19'
+    ctx.fillStyle = '#1e1e1e'
     ctx.fillRect(side < 0 ? tx - wide - 2 : tx - 2, mid - L.font * 0.75, wide + 4, L.font * 1.5)
     ctx.fillStyle = INK
     ctx.fillText(text, tx, mid)

@@ -50,7 +50,7 @@ const INPUT_ENEMY_FACING = 55
 const INPUT_CLEAR_LINE = 37
 const INPUT_AIM_WIDTHS = 79
 const GUN_MIN_RANGE = 4.5     // inside this the fight is the axe's
-const GUN_FORCE_RANGE = 7     // past this the crossbow comes out, loaded or not
+const GUN_FORCE_RANGE = 6     // past this the crossbow comes out, loaded or not
 const GUN_REST_STEPS = 8      // decisions the crossbow stays away after a shield turned it back
 const CHASE_RANGE = 3.5       // with the axe out it runs at an enemy further than this
 const CHASE_FACING = 0.7      // only while roughly facing it
@@ -1183,7 +1183,7 @@ class Fighter {
     }
   }
 
-  // The range habits. Past 7 blocks the crossbow is out, from 4.5 blocks it locks on, reloads the moment it is empty and
+  // The range habits. Past 6 blocks the crossbow is out, from 4.5 blocks it locks on, reloads the moment it is empty and
   // fires the moment the aim is on a target with no shield facing it. A raised shield facing it sends it back to the axe
   // for a moment, and with the axe out it runs at an enemy that is out of reach
   applyRangeRules (mask, at, fix, obs, distance, canCrossbow, canAxe, axe, crossbow) {
