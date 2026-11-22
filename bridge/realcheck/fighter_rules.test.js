@@ -221,6 +221,57 @@ test('a client without an arena keeps every weapon open', () => {
   assert.deepStrictEqual(weapons, [1, 1, 1, 1, 1])
 })
 
+function critFighter (values) {
+  const bot = fakeBot(2)
+  const f = new Fighter(bot, 'Rival', { arena: { x: 0, y: 100, z: 0, half: 10 }, critRule: true })
+  f.sight = { pos: bot.players.Rival.entity.position, move: { x: 0, y: 0, z: 0 }, visible: true, chestClear: true, crosshairClear: true, seen: true }
+  afterOpening(f)
+  return { f, bot, mask: masked(f, { 12: 1, 33: 0.4, 35: 1, ...values }, 2) }
+}
+
+test('the crit rule is off unless asked for', () => {
+  const { f } = arenaFighter(2)
+  afterOpening(f)
+  assert.strictEqual(f.critRule, false)
+  const mask = masked(f, { 4: 1, 12: 1, 16: 1, 35: 1 }, 2)
+  assert.deepStrictEqual(only(mask, 3).length, 2)
+  assert.deepStrictEqual(only(mask, 6).length, 3)
+})
+
+test('on the ground near a ready charge the crit rule jumps and holds the swing', () => {
+  const { mask } = critFighter({ 4: 1, 16: 0.95 })
+  assert.deepStrictEqual(only(mask, 3), [1])
+  assert.deepStrictEqual(only(mask, 6), [0])
+})
+
+test('falling with a ready charge and sprint off the crit rule swings', () => {
+  const { mask } = critFighter({ 11: 0.05, 16: 0.95 })
+  assert.deepStrictEqual(only(mask, 2), [0])
+  assert.deepStrictEqual(only(mask, 6), [1])
+})
+
+test('a raised shield facing the fighter is hit at once', () => {
+  const { mask } = critFighter({ 4: 1, 16: 0.3, [ENEMY_SHIELD_UP]: 1, [ENEMY_FACING]: 1 })
+  assert.deepStrictEqual(only(mask, 6), [1])
+})
+
+test('a ready swing at an enemy leaving reach is not held', () => {
+  const { mask } = critFighter({ 16: 0.95, 33: 0.7 })
+  assert.ok(head(mask, 6)[1] === 1)
+})
+
+test('the sprint release is sent before the attack in one action', () => {
+  const { f, bot } = arenaFighter(2)
+  const order = []
+  bot.setControlState = (k, v) => { if (k === 'sprint') order.push(`sprint:${v}`) }
+  bot.attack = () => order.push('attack')
+  f.crosshairOnEnemy = () => true
+  f.ticksSinceSwing = 20
+  const action = [1, 0, 0, 0, 6, 5, 1, 0, 0, 0, 0]
+  f.act(action)
+  assert.deepStrictEqual(order, ['sprint:false', 'attack'])
+})
+
 // One crossbow arrow: it moves, then slows, then falls
 function arrowPasses (from, yawDeg, pitchDeg, target) {
   const y = yawDeg * Math.PI / 180
