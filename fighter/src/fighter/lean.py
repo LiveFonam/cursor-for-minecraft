@@ -77,6 +77,8 @@ class LeanConfig:
     stages: list[Stage] = field(default_factory=lambda: list(CURRICULUM))
     plan: str = "melee"
     adaptive: bool = False
+    reward: dict = field(default_factory=dict)
+    fight_setup: str = "standard"
 
 
 def resolve_device(name: str) -> torch.device:
@@ -265,6 +267,8 @@ class EnvSpec:
     seed: int
     takeover: bool = False
     plan: str = "melee"
+    reward: tuple[tuple[str, float], ...] = ()
+    fight_setup: str = "standard"
 
     def build(self) -> ArenaVecEnv:
         if self.task == FIGHT:
@@ -274,8 +278,8 @@ class EnvSpec:
             return ArenaVecEnv(
                 self.n_envs,
                 pool,
-                SimConfig(ready_gate=plan.ready_gate),
-                RewardConfig(**plan.reward),
+                SimConfig.for_setup(self.fight_setup, ready_gate=plan.ready_gate),
+                RewardConfig(**{**plan.reward, **dict(self.reward)}),
                 max_ticks=MAX_TICKS,
                 seed=self.seed,
                 interface=interface,
@@ -296,10 +300,12 @@ def pack_env(env: ArenaVecEnv) -> bytes:
 def unpack_env(env: ArenaVecEnv, blob: bytes) -> None:
     """Restore a state from `pack_env` in place, keeping the live interfaces."""
     interfaces = env.interface, env.pool.interface
+    rivals = env.pool.rivals
     saved = pickle.loads(blob)
     env.__dict__.clear()
     env.__dict__.update(saved)
     env.interface, env.pool.interface = interfaces
+    env.pool.set_rivals(rivals)
 
 
 class ArenaSlot:
@@ -367,6 +373,10 @@ class ArenaSlot:
 
     def add_snapshot(self, policy: NumpyPolicy) -> None:
         self.env.pool.add_snapshot(policy)
+
+    def set_rivals(self, rivals: list) -> None:
+        """Install frozen fighters from other runs in this batch's league."""
+        self.env.pool.set_rivals(rivals)
 
     def set_experts(self, loaded: dict) -> None:
         """Swap the active experts and refresh the masks the next decision will read."""
@@ -446,9 +456,18 @@ class Host:
     """Runs all simulator batches and exposes their joined arrays."""
 
     def __init__(
-        self, task: str, n_envs: int, workers: int, seed: int, stagger: bool, takeover: bool = False, plan: str = "melee"
+        self,
+        task: str,
+        n_envs: int,
+        workers: int,
+        seed: int,
+        stagger: bool,
+        takeover: bool = False,
+        plan: str = "melee",
+        reward: tuple[tuple[str, float], ...] = (),
+        fight_setup: str = "standard",
     ):
-        probe = EnvSpec(task, 1, seed, takeover, plan).build()
+        probe = EnvSpec(task, 1, seed, takeover, plan, reward, fight_setup).build()
         self.n_obs = int(np.prod(probe.observation_space.shape))
         self.sizes = [int(n) for n in probe.action_space.nvec]
         self.max_ticks = int(probe.max_ticks)
@@ -477,7 +496,7 @@ class Host:
         self.local: ArenaSlot | None = None
         if workers <= 0:
             self.views = {key: np.zeros(shape, dtype=dtype) for key, (shape, dtype) in layout.items()}
-            self.local = ArenaSlot(EnvSpec(task, n_envs, seed, takeover, plan), self.views, stagger)
+            self.local = ArenaSlot(EnvSpec(task, n_envs, seed, takeover, plan, reward, fight_setup), self.views, stagger)
             return
         names = {}
         self.views = {}
@@ -493,7 +512,7 @@ class Host:
         try:
             for i in range(workers):
                 ours, theirs = context.Pipe()
-                spec = EnvSpec(task, n_envs, seed + 100_003 * i, takeover, plan)
+                spec = EnvSpec(task, n_envs, seed + 100_003 * i, takeover, plan, reward, fight_setup)
                 proc = context.Process(
                     target=_worker, args=(theirs, names, spec, i * n_envs, stagger), daemon=True
                 )
@@ -564,7 +583,17 @@ class LeanTrainer:
         self.out = Path(cfg.out)
         self.out.mkdir(parents=True, exist_ok=True)
         self.log_path = self.out / "progress.jsonl"
-        self.host = Host(task, cfg.n_envs, cfg.workers, cfg.seed, cfg.stagger, takeover, cfg.plan)
+        self.host = Host(
+            task,
+            cfg.n_envs,
+            cfg.workers,
+            cfg.seed,
+            cfg.stagger,
+            takeover,
+            cfg.plan,
+            tuple(sorted(cfg.reward.items())),
+            cfg.fight_setup,
+        )
         self.sizes = self.host.sizes
         self.total_envs = self.host.total
         dev = self.device
@@ -723,7 +752,7 @@ class LeanTrainer:
         for name in mix:
             if name != LEAGUE and rates.get(name, (0, 0))[1]:
                 wins, games = rates[name]
-                mix[name] = (1.0 - wins / games) ** 2 + 0.05
+                mix[name] = max((1.0 - wins / games) ** 2 + 0.05, (stage.keep or {}).get(name, 0.0))
         self.host.call("set_stage", mix, stage.shaping, False, stage.weapons)
 
     def _after_rollout(self) -> None:

@@ -339,8 +339,12 @@ def _strike_slot(
         full_raw[env[open_hit]] = raw[open_hit]
         punch = np.zeros(sim.n, dtype=np.int64)
         punch[env[open_hit]] = sim.arrow_punch[env[open_hit], slot]
+        in_window = sim.hurt_timer[:, seat] > 0
+        first_touch = np.zeros(sim.n, dtype=bool)
+        first_touch[env[open_hit]] = ~sim.arrow_bounced[env[open_hit], slot]
         dealt = sim._hurt(mask, seat, full_raw, direction, knockback, punch)
         landed = mask & (dealt > 0.0)
+        sim.events["arrows_wasted"][:, 1 - seat] += mask & first_touch & in_window & ~landed
         lit = env[open_hit][landed[env[open_hit]] & sim.arrow_flame[env[open_hit], slot]]
         if len(lit):
             sim.combat.ignite(lit, seat, np.full(len(lit), C.FLAME_TICKS))

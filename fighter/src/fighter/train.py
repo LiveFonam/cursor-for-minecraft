@@ -36,6 +36,7 @@ class Stage:
 
     weapons: the only weapons the learner may select, or None for all of them.
     floors: the least win rate needed against each named opponent to advance.
+    keep: the least mix weight of named opponents when the final mix adapts.
     """
 
     name: str
@@ -45,6 +46,7 @@ class Stage:
     shaping: float = 1.0
     weapons: tuple[int, ...] | None = None
     floors: dict[str, float] | None = None
+    keep: dict[str, float] | None = None
 
 
 CURRICULUM = [
@@ -71,6 +73,10 @@ CURRICULUM = [
             "retreater": 0.5,
             "hit_and_run": 0.5,
             "rusher": 0.5,
+            "pvp_basic": 0.5,
+            "pvp_combo": 0.5,
+            "pvp_sweat": 0.5,
+            "shield_holder": 0.5,
         },
         2.0,
         0,

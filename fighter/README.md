@@ -119,6 +119,22 @@ The reward pays for damage and wins. Smaller shaping terms encourage crit jumps,
 W tapping, strafing, spacing, blocking, shield breaks and axe follow-up damage. Shaping
 shrinks in later stages.
 
+A fight setup names the kit and arena of a run. It is fixed for the life of a campaign or an
+evolution, and its children train and are tested in it.
+
+| Setup | Kit | Arena |
+| --- | --- | --- |
+| `standard` (default) | iron armor, diamond axe and sword, shield, crossbow, bow, 6 arrows | 24 blocks wide |
+| `diamond_20` | unenchanted diamond armor, diamond axe and sword, shield, crossbow, bow, 6 arrows | 20 blocks wide |
+
+```sh
+nice -n 10 uv run python -m fighter.evolve run --out runs/evolve --parents runs/a,runs/b --fight-setup diamond_20
+```
+
+Ranking matches run one at a time inside the driver, so ranking loads no extra copy of
+PyTorch. `--rank-parallel N` plays them in N worker processes instead. Each match has its
+own seed, so the results are the same either way.
+
 ## Drills
 
 Each drill trains from random weights and has a pass test on held-out seeds.

@@ -3,8 +3,9 @@
 Each training is a role with its own folder, checkpoint and lock. Drill roles run
 their pass test on held-out seeds and publish the network to the expert store
 only when it passes. The fighter polls the store at every rollout boundary and
-loads new experts there. Every network starts from random weights, and the
-fighter loads only experts published by its own campaign.
+loads new experts there. A network starts from random weights unless its folder
+holds a `start.pt`, which the evolution driver writes for a child of an earlier
+fighter. The fighter loads only experts published by its own campaign.
 
 A campaign folder holds:
   campaign.json    settings and the campaign id
@@ -14,6 +15,7 @@ A campaign folder holds:
   experts/         the expert store
   <role>/          checkpoint.pkl, status.json, progress.jsonl, policy.npz, log.txt
   <role>/farm/     one report per farming flag, see farmwatch.py
+  fighter/start.pt optional starting weights of an evolved child
 
 Run it again with the same folder to continue exactly where it stopped.
 """
@@ -60,7 +62,8 @@ from .lean import EnvSpec, FIGHT, LeanConfig, LeanTrainer, free_memory_gb, pack_
 from .opponents import SCRIPTED, OpponentPool
 from .policy import NumpyPolicy
 from .sim import SimConfig
-from .plans import PLANS
+from .plans import PLANS, arena_stage
+from .rivals import load_rivals
 from .train import MAX_TICKS, CurriculumCallback, TrainConfig, build_model, limit_threads, peak_rss_gb
 
 FIGHTER = "fighter"
@@ -103,6 +106,9 @@ class CampaignConfig:
     snapshot_every: int = 250_000
     plan: str = "melee"
     id: str = ""
+    arena: bool = False
+    reward: dict | None = None
+    fight_setup: str = "standard"
 
 
 SMOKE = {
@@ -129,6 +135,7 @@ class Runtime:
     workers: int = 0
     max_restarts: int = 3
     parent: int = 0
+    rivals: list[str] | None = None
 
 
 def role_sizes(cfg: CampaignConfig, role: str) -> dict[str, int]:
@@ -249,9 +256,11 @@ class LeanRunner:
             checkpoint_every=NEVER,
             max_rss_gb=rt.max_rss_gb,
             min_free_gb=rt.min_free_gb,
-            stages=list(PLANS[cfg.plan].stages),
+            stages=[arena_stage(cfg.plan)] if cfg.arena else list(PLANS[cfg.plan].stages),
             plan=cfg.plan,
-            adaptive=PLANS[cfg.plan].adaptive,
+            adaptive=PLANS[cfg.plan].adaptive or cfg.arena,
+            reward=dict(cfg.reward or {}),
+            fight_setup=cfg.fight_setup,
         )
         self.task = task
         self.trainer = LeanTrainer(lean, task, takeover=takeover)
@@ -271,6 +280,18 @@ class LeanRunner:
 
     def policy(self) -> NumpyPolicy:
         return self.trainer.model.to_policy()
+
+    def stages(self) -> list:
+        return list(self.trainer.cfg.stages)
+
+    def set_rivals(self, rivals: list) -> None:
+        self.trainer.host.call("set_rivals", rivals)
+
+    def load_start(self, path: Path) -> None:
+        """Start from saved weights, with the same network as the first league member."""
+        saved = torch.load(path, map_location=self.trainer.device, weights_only=True)
+        self.trainer.model.load_state_dict(saved["model"])
+        self.trainer.add_snapshot()
 
     def set_experts(self, loaded: dict[str, LoadedExpert]) -> None:
         self.trainer.host.call("set_experts", loaded)
@@ -380,6 +401,15 @@ class SB3Runner:
     def policy(self) -> NumpyPolicy:
         return NumpyPolicy.from_sb3(self.model)
 
+    def stages(self) -> list:
+        return list(self.tcfg.stages)
+
+    def set_rivals(self, rivals: list) -> None:
+        raise SystemExit("rivals need the lean trainer")
+
+    def load_start(self, path: Path) -> None:
+        raise SystemExit("starting weights need the lean trainer")
+
     def set_experts(self, loaded: dict[str, LoadedExpert]) -> None:
         self.env.interface.experts.install(loaded)
 
@@ -436,7 +466,7 @@ class SB3Runner:
 
 def make_runner(cfg: CampaignConfig, role: str, folder: Path, rt: Runtime):
     """Build the trainer of one role from random weights."""
-    if cfg.plan != "melee" and cfg.trainer != "lean":
+    if (cfg.plan != "melee" or cfg.arena or cfg.reward or cfg.fight_setup != "standard") and cfg.trainer != "lean":
         raise SystemExit("training plans need the lean trainer")
     task = FIGHT if role == FIGHTER else DRILL_OF[role]
     kind = LeanRunner if cfg.trainer == "lean" else SB3Runner
@@ -549,7 +579,12 @@ class RoleRun:
 
     def _run(self) -> int:
         self.runner = make_runner(self.cfg, self.role, self.folder, self.rt)
+        if self.fighter and self.rt.rivals:
+            rivals = load_rivals(self.rt.rivals, skip=self.root, log=self.log)
+            self.runner.set_rivals(rivals)
+            self.log("loaded rivals", 0, rivals=[rival.name for rival in rivals])
         path = self.folder / "checkpoint.pkl"
+        start = self.folder / "start.pt"
         if path.exists():
             saved = pickle.loads(path.read_bytes())
             self.state = saved["role"]
@@ -559,6 +594,8 @@ class RoleRun:
             self.watch.restore(self.state.get("farm"))
             self.log("resumed", self.runner.steps, trainer=self.cfg.trainer)
         else:
+            if self.fighter and start.exists():
+                self.runner.load_start(start)
             self.state = {
                 "next_test": self.cfg.test_every,
                 "next_checkpoint": self.cfg.checkpoint_every,
@@ -569,7 +606,8 @@ class RoleRun:
                 "best": None,
                 "last_test": -1,
             }
-            self.log("started from random weights", 0, trainer=self.cfg.trainer)
+            origin = "parent" if self.fighter and start.exists() else "random"
+            self.log(f"started from {origin} weights", 0, trainer=self.cfg.trainer)
         if self.fighter:
             self._poll()
         self.farm_context = self._context()
@@ -601,10 +639,12 @@ class RoleRun:
 
     def replay_env(self, n: int, seed: int) -> ArenaVecEnv:
         """Build fresh arenas with the task, stage and experts this role trains on now."""
-        env = EnvSpec(FIGHT if self.fighter else DRILL_OF[self.role], n, seed, self.fighter, self.cfg.plan).build()
+        reward = tuple(sorted((self.cfg.reward or {}).items()))
+        task = FIGHT if self.fighter else DRILL_OF[self.role]
+        env = EnvSpec(task, n, seed, self.fighter, self.cfg.plan, reward, self.cfg.fight_setup).build()
         if self.fighter:
             name = self.runner.info()["stage"]
-            stage = next(item for item in PLANS[self.cfg.plan].stages if item.name == name)
+            stage = next(item for item in self.runner.stages() if item.name == name)
             env.reward_cfg.shaping = stage.shaping
             env.set_weapons(stage.weapons)
             env.pool.set_mix(stage.mix)
@@ -939,7 +979,7 @@ def evaluate_fighter(root: Path, opponents: list[str], games: int = 8) -> list[d
             games_per_arena=games,
             interface=interface,
             weapons=plan.stages[-1].weapons,
-            sim_config=SimConfig(ready_gate=plan.ready_gate),
+            sim_config=SimConfig.for_setup(cfg.fight_setup, ready_gate=plan.ready_gate),
         )
         result["experts"] = meta["experts"]
         results.append(result)
@@ -952,6 +992,8 @@ def _runtime(args: argparse.Namespace) -> Runtime:
         value = getattr(args, item.name, None)
         if value is not None:
             setattr(rt, item.name, value)
+    if isinstance(rt.rivals, str):
+        rt.rivals = [path.strip() for path in rt.rivals.split(",") if path.strip()]
     return rt
 
 
@@ -984,6 +1026,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--threads", type=int, default=None)
     p.add_argument("--workers", type=int, default=None)
     p.add_argument("--max-restarts", type=int, default=None)
+    p.add_argument("--rivals", default=None, help="comma separated run folders whose fighters join the league")
 
     p = commands.add_parser("role", help="run one role, as started by `run`")
     p.add_argument("name", choices=ROLES)

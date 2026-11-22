@@ -92,6 +92,12 @@ def campaign(args: argparse.Namespace) -> int:
     return campaign_main(args.rest)
 
 
+def evolve(args: argparse.Namespace) -> int:
+    from .evolve import main as evolve_main
+
+    return evolve_main(args.rest)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fighter", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -132,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = commands.add_parser("campaign", help="train the experts and the fighter together, see `campaign -h`")
     p.add_argument("rest", nargs=argparse.REMAINDER)
     p.set_defaults(run=campaign)
+
+    p = commands.add_parser("evolve", help="breed fighters from the best runs, see `evolve -h`")
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    p.set_defaults(run=evolve)
     return parser
 
 

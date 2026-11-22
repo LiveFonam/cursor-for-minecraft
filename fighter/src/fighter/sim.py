@@ -38,12 +38,19 @@ EVENT_NAMES = (
     "arrows_blocked",
     "arrows_taken",
     "arrows_picked",
+    "arrows_wasted",
 )
 DECISION_RATES = (10, 15, 20)
 PROFILES = ("arena", "surface", "full")
 SPAWN_TRIES = 8
 SPAWN_SCAN_STEP = 48
 SPAWN_CORNER_INSET = 1e-4
+# Named fight conditions for training and testing. "standard" is the plain SimConfig. "diamond_20" is one full set of
+# unenchanted diamond armor, a diamond axe and sword, a shield, a crossbow, a bow and 6 arrows, in a 20 block wide arena.
+FIGHT_SETUPS: dict[str, dict] = {
+    "standard": {},
+    "diamond_20": {"armor": "diamond", "arena_half": 10.0},
+}
 
 
 @dataclass
@@ -92,6 +99,13 @@ class SimConfig:
             changes["knockback_delay"] = self.knockback_delay
         if changes:
             self.move = replace(self.move, **changes)
+
+    @classmethod
+    def for_setup(cls, name: str = "standard", **settings) -> "SimConfig":
+        """Return the config of a named fight setup, with any other settings added."""
+        if name not in FIGHT_SETUPS:
+            raise ValueError(f"unknown fight setup {name!r}, expected one of {sorted(FIGHT_SETUPS)}")
+        return cls(**FIGHT_SETUPS[name], **settings)
 
     @classmethod
     def uhc(cls) -> "SimConfig":
