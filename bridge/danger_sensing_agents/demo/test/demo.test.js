@@ -764,7 +764,7 @@ test('neuron screen: one file, no outside resources, and server text only throug
   const html = fs.readFileSync(path.join(__dirname, '..', 'neuron_screen.html'), 'utf8')
   assert.ok(!/(src|href)\s*=\s*["']?https?:/i.test(html))
   assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/.test(html))
-  assert.ok(html.includes('#1a1a19') && html.includes('#f0efec') && html.includes('#c3c2b7'))
+  assert.ok(html.includes('#1e1e1e') && html.includes('#ececec') && html.includes('#22e07a'))
   assert.ok(html.includes("new EventSource('/stream')") && html.includes("fetch('/meta'"))
   assert.ok(html.includes('Neuron names are unavailable'))
 })
