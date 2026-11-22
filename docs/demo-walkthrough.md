@@ -46,7 +46,7 @@ Type `!reset`. You stand in first person inside a small base. It has a bed, a ch
 The agent starts with very little:
 
 - A shield
-- A diamond axe
+- A stone axe
 - 6 bread
 - No armor
 

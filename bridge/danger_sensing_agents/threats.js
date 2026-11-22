@@ -24,7 +24,7 @@
 
 const { Vec3 } = require('vec3')
 const { isEnemy, dist } = require('./targets')
-const { foodPointsCarried, foodSupply, supplyText, HUNGRY } = require('./skills/food')
+const { foodPointsCarried, foodSupply, supplyText, HUNGRY, HUNT_ENOUGH } = require('./skills/food')
 const { FOOD_EMERGENCY, FOOD_RECOVERED } = require('./skills/food_plan')
 const { sealedOff } = require('./hazards')
 
@@ -228,7 +228,7 @@ const angryEnderman = e => e.name === 'enderman' && e.metadata?.[ENDERMAN_ANGRY]
 
 class DangerAssessor {
   // reserve: the food points to carry right now, a number or a function (a long job raises it, food_plan.js).
-  // Never below FOOD_RESERVE. netFights(entity): whether the trained mob network would take this mob right now
+  // Never below FOOD_RESERVE or above HUNT_ENOUGH. netFights(entity): whether the trained mob network would take this mob right now
   constructor (bot, { friends, owner = null, now = () => Date.now(), reserve = null, netFights = null, cookWork = null } = {}) {
     this.cookWork = cookWork
     this.bot = bot
@@ -242,7 +242,7 @@ class DangerAssessor {
 
   wantFood () {
     const r = typeof this.reserve === 'function' ? this.reserve() : this.reserve
-    return Math.max(FOOD_RESERVE, Number.isFinite(r) ? r : 0)
+    return Math.min(HUNT_ENOUGH, Math.max(FOOD_RESERVE, Number.isFinite(r) ? r : 0))
   }
 
   // After a death everything it remembered is about the old life

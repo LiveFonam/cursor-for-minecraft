@@ -67,7 +67,7 @@ function agentKitCommands (name) {
   return [
     `clear ${name}`,
     `effect clear ${name}`,
-    `item replace entity ${name} hotbar.0 with diamond_axe`,
+    `item replace entity ${name} hotbar.0 with stone_axe`,
     `item replace entity ${name} weapon.offhand with shield`,
     `item replace entity ${name} hotbar.8 with bread 6`,
     `effect give ${name} instant_health 1 3 true`,

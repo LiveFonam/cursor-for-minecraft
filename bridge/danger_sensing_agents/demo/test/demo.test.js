@@ -188,6 +188,12 @@ test('scene: a spot for a mob is two free blocks on solid ground', () => {
   assert.equal(scene.openSpot(() => null, { x: 0, y: 0, z: 0 }), null)
 })
 
+test('scene: the agent starts with a stone axe', () => {
+  const a = scene.agentKitCommands('Agent1')
+  assert.ok(a.includes('item replace entity Agent1 hotbar.0 with stone_axe'))
+  assert.ok(!a.some(c => c.includes('diamond_axe')))
+})
+
 test('scene: the fight kit is the full kit in the fighter\'s slots', () => {
   const k = scene.fighterKitCommands('Viewer', { x: 1, y: 100, z: 2 }, 90)
   assert.ok(k.includes('item replace entity Viewer hotbar.0 with diamond_axe'))
