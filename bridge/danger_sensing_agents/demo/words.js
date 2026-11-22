@@ -5,7 +5,7 @@ const ANIMALS = Object.freeze(['cow', 'pig', 'sheep', 'chicken'])
 
 const HELP_LINES = Object.freeze([
   'Demo commands:',
-  '!reset (or !start): back to your base with an empty chest, agent with shield, axe and 6 bread',
+  '!reset (or !start): back to your base with an empty chest, agent with shield, axe and 16 bread',
   '!chest: the same, with the chest stocked for a diamond pickaxe',
   '!pov: during a task, see through the agent\'s eyes. !spec to go back to flying free',
   '!haste [on|off]: give the agent Haste for faster mining, or take it away',
@@ -15,7 +15,7 @@ const HELP_LINES = Object.freeze([
   `!animal [${ANIMALS.join('|')}]: put an animal by the agent`,
   '!stop: stop everything and go back to the base',
   '!help: this list',
-  'Or say a task in plain words: make me a diamond pickaxe'
+  'Or say a task in plain words: make me an iron pickaxe'
 ])
 
 function kindOf (word, kinds, command) {

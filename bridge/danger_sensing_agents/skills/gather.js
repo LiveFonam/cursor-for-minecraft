@@ -13,6 +13,7 @@ const { pickTool, stepInto, walkOntoDrops } = require('./mine')
 const { pickUpDrops } = require('./pickup')
 const { canFlow, findKnownOre, preAim, seesBlock, walkCells } = require('./motion')
 const { WOODS } = require('./craft')
+const { dryFirst, holdsWater, leaveShore, stairIsDry, stepOutToDig } = require('./water')
 
 const SEE = 24
 const WANDERS = 6
@@ -86,7 +87,7 @@ async function collectDrops (bot, pos, token) {
   await pickUpDrops(bot, pos, token, { settleMs: 300 })
 }
 
-async function digOne (bot, pos, token) {
+async function digOne (bot, pos, token, log) {
   const b = bot.blockAt(pos)
   if (!b || b.name === 'air') return false
   const reach = () => bot.entity.position.offset(0, 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.4
@@ -99,6 +100,8 @@ async function digOne (bot, pos, token) {
     }
   }
   if (token?.cancelled) return false
+  await stepOutToDig(bot, pos, token, log)
+  if (token?.cancelled) return false
   const again = bot.blockAt(pos)
   if (!again || again.name !== b.name) return false
   const pick = pickTool(bot, again)
@@ -110,9 +113,17 @@ async function digOne (bot, pos, token) {
 
 // A short staircase down from where it stands to reach stone (cobblestone on flat ground). Returns blocks dug
 async function staircase (bot, item, want, token, log) {
+  await leaveShore(bot, token, log)
+  if (token?.cancelled) return 0
   const start = bot.entity.position.floored()
   const yaw = bot.entity.yaw
-  const [dx, dz] = [[0, -1], [-1, 0], [0, 1], [1, 0]][((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4]
+  const ways = [[0, -1], [-1, 0], [0, 1], [1, 0]]
+  const facing = ((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4
+  // the way it faces, else a side, else behind it. With water on all four it digs on the way it faces
+  const dry = [0, 1, 3, 2].map(t => ways[(facing + t) % 4]).find(([x, z]) => stairIsDry(bot, start, { x, z }))
+  const [dx, dz] = dry || ways[facing]
+  if (dry && dry !== ways[facing]) log(`${bot.username} water: turning the staircase`)
+  const stops = dry ? ['lava', 'water'] : ['lava']
   let feet = start
   let dug = 0
   const walked = [start]
@@ -127,8 +138,9 @@ async function staircase (bot, item, want, token, log) {
     for (const p of [next.offset(0, 2, 0), next.offset(0, 1, 0), next]) {
       const b = bot.blockAt(p)
       if (!b) return dug
-      if (['lava', 'water'].includes(b.name) || ['lava', 'water'].includes(bot.blockAt(p.offset(0, 1, 0))?.name)) return dug
+      if (stops.includes(b.name) || stops.includes(bot.blockAt(p.offset(0, 1, 0))?.name)) return dug
       if (b.boundingBox === 'empty' && b.name !== 'short_grass') continue
+      if (dry && holdsWater(bot, p)) return dug
       if (yields.has(b.name) && enough()) break
       const pick = pickTool(bot, b)
       if (pick.error) return dug
@@ -233,10 +245,10 @@ async function gather (bot, item, want, token, { log = () => {}, say = () => {},
   const skip = p => avoid(p) || failed.has(p.toString()) || !!digHazard(bot, bot.blockAt(p))
   const canceled = new Map()
   while (count(bot, item) < target && !token?.cancelled && broken < src.cap) {
-    const spots = preferNearMaster(visible(bot, src.blocks, skip, { leaves: src.leaves, logs: LOGS.includes(item) }), bot, master?.())
+    const spots = dryFirst(bot, preferNearMaster(visible(bot, src.blocks, skip, { leaves: src.leaves, logs: LOGS.includes(item) }), bot, master?.()))
     if (spots.length) {
       try {
-        if (await digOne(bot, spots[0], token)) broken++
+        if (await digOne(bot, spots[0], token, log)) broken++
       } catch (err) {
         log(`${bot.username} gather ${item}: ${err.message}`)
         // a canceled dig says nothing about the block, so it is tried again

@@ -69,7 +69,7 @@ function agentKitCommands (name) {
     `effect clear ${name}`,
     `item replace entity ${name} hotbar.0 with stone_axe`,
     `item replace entity ${name} weapon.offhand with shield`,
-    `item replace entity ${name} hotbar.8 with bread 6`,
+    `item replace entity ${name} hotbar.8 with bread 16`,
     `effect give ${name} instant_health 1 3 true`,
     `effect give ${name} saturation 1 20 true`
   ]
@@ -196,8 +196,8 @@ function baseCommands (stage) {
   ]
 }
 
-// The demo's zombies carry a wooden axe, which they keep when they die
-const ZOMBIE_GEAR = ',equipment:{mainhand:{id:"minecraft:wooden_axe",count:1}},drop_chances:{mainhand:0.0f}'
+// The demo's zombies carry a wooden axe and wear a helmet so the sun does not burn them. They drop neither
+const ZOMBIE_GEAR = ',equipment:{mainhand:{id:"minecraft:wooden_axe",count:1},head:{id:"minecraft:iron_helmet",count:1}},drop_chances:{mainhand:0.0f,head:0.0f}'
 
 function summonCommand (kind, p, tags) {
   const list = tags.map(t => `"${t}"`).join(',')

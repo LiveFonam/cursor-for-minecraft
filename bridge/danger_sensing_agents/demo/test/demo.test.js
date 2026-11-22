@@ -159,12 +159,12 @@ test('scene: clears every hostile mob but the four, and no animal', () => {
   assert.ok(ANIMALS.every(a => !gone.includes(a)))
 })
 
-test('scene: the agent starts with a shield, an axe, exactly 6 bread and no armor', () => {
+test('scene: the agent starts with a shield, an axe, exactly 16 bread and no armor', () => {
   const kit = scene.agentKitCommands('Agent1')
   assert.equal(kit[0], 'clear Agent1')
   assert.ok(kit.includes('item replace entity Agent1 weapon.offhand with shield'))
   assert.ok(kit.some(c => /hotbar\.0 with \w*_axe$/.test(c)))
-  assert.ok(kit.includes('item replace entity Agent1 hotbar.8 with bread 6'))
+  assert.ok(kit.includes('item replace entity Agent1 hotbar.8 with bread 16'))
   assert.ok(!kit.some(c => /armor|helmet|chestplate|leggings|boots/.test(c)))
 })
 
@@ -405,7 +405,7 @@ test('controller: the purge runs on its timer and close stops it', async () => {
   assert.ok(rcon.has('gamerule immediate_respawn true'))
   assert.ok(rcon.has('difficulty normal'))
   assert.ok(rcon.has('gamerule spawn_mobs true'))
-  assert.ok(rcon.has('item replace entity Agent1 hotbar.8 with bread 6'))
+  assert.ok(rcon.has('item replace entity Agent1 hotbar.8 with bread 16'))
   const [tick] = [...timers.intervals.values()]
   rcon.sent.length = 0
   await tick()
@@ -608,10 +608,10 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   assert.ok(checked > 60, `only ${checked} lines checked`)
 })
 
-test('scene: the agent starts with a stone axe, a shield and 6 bread', () => {
+test('scene: the agent starts with a stone axe, a shield and 16 bread', () => {
   const k = scene.agentKitCommands('Agent1')
   assert.ok(k.includes('item replace entity Agent1 hotbar.0 with stone_axe'))
   assert.ok(k.includes('item replace entity Agent1 weapon.offhand with shield'))
-  assert.ok(k.includes('item replace entity Agent1 hotbar.8 with bread 6'))
+  assert.ok(k.includes('item replace entity Agent1 hotbar.8 with bread 16'))
   assert.ok(!k.some(c => c.includes('diamond')))
 })

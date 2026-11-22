@@ -455,3 +455,28 @@ test('a walk that runs out of time but did get across still shuts the door behin
   assert.equal(f.lever(L.door.insideLever), false)
   assert.equal(f.isOpen(), false)
 })
+
+test('from deep in a mine it walks back to the door with digging allowed, and keeps trying after a failed leg', async () => {
+  const { approachDoor } = require('../walk_home')
+  const stand = { x: 0, y: 64, z: 0 }
+  const position = { x: 0, y: 20, z: 80 }
+  const calls = []
+  const walk = async (bot, goal, token, options) => {
+    calls.push(options.rescue)
+    if (calls.length === 1) throw new Error('No path to the goal!')
+    position.y = 64
+    position.z = 3
+  }
+  await approachDoor({ bot: { entity: { position } }, agents: { log: () => {} } }, stand, { cancelled: false }, walk, () => 'digging moves')
+  assert.deepEqual(calls, ['digging moves', 'digging moves'])
+})
+
+test('already by the door, or cancelled, it does not walk', async () => {
+  const { approachDoor } = require('../walk_home')
+  let walks = 0
+  const walk = async () => { walks++ }
+  const ctx = position => ({ bot: { entity: { position } }, agents: { log: () => {} } })
+  await approachDoor(ctx({ x: 1, y: 64, z: 2 }), { x: 0, y: 64, z: 0 }, { cancelled: false }, walk, () => 'm')
+  await approachDoor(ctx({ x: 0, y: 20, z: 80 }), { x: 0, y: 64, z: 0 }, { cancelled: true }, walk, () => 'm')
+  assert.equal(walks, 0)
+})

@@ -8,14 +8,34 @@ const { walkTo, rescueMoves } = require('../skills/move')
 const LEGS = 12         // the base can be a whole mine away
 const LEG_MS = 30000
 const NEAR = 2
+const DOOR_NEAR = 6     // close enough for the door's own careful walk
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+
+// From deep in a mine the door is too far for a plain walk, so it first comes back to it, digging or pillaring up where
+// its way has gone. It stops short of the base, so the wall is left to the door's own careful steps
+async function approachDoor (ctx, stand, token, walk = walkTo, moves = rescueMoves) {
+  const { bot, agents } = ctx
+  for (let leg = 0; leg < LEGS; leg++) {
+    if (token.cancelled || dist(stand, bot.entity.position) <= DOOR_NEAR) return
+    try {
+      await walk(bot, new goals.GoalNear(stand.x, stand.y, stand.z, 2), token, { ms: LEG_MS, rescue: moves(bot), log: agents.log })
+    } catch (err) {
+      if (token.cancelled) return
+      agents.log(`${bot.username} walk back to the door: ${err.message}`)
+    }
+  }
+}
 
 // 'done', 'far', 'shut' (the door would not let it in) or 'cancelled'. door: the step that gets it inside first
 async function walkToSpot (ctx, at, token, door = null) {
   const { bot, agents } = ctx
   bot.pathfinder.setMovements(agents.noDigMoves(bot))
   if (door) {
+    if (door.approach) {
+      await approachDoor(ctx, door.approach, token)
+      bot.pathfinder.setMovements(agents.noDigMoves(bot))
+    }
     const through = await door(token)
     if (through !== 'done') return through
     bot.pathfinder.setMovements(agents.noDigMoves(bot))
@@ -99,4 +119,4 @@ function runAsWalk (ctx, run) {
   return homeMode(ctx).setOn('demohome', { run })
 }
 
-module.exports = { walkHome, runAsWalk, walkToSpot, WalkHomeMode }
+module.exports = { walkHome, runAsWalk, walkToSpot, approachDoor, WalkHomeMode }

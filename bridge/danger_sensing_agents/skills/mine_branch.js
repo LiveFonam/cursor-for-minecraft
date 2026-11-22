@@ -30,6 +30,7 @@ const { bestPickaxeItem } = require('./gather_kinds')
 const { announce } = require('../announcer')
 const { ORE_KINDS, oreKind, kindOfJob } = require('./ore_marks')
 const { MAX_APPROACH } = require('./tunnel_map')
+const { WATER_NAMES, WATER_TURNS, digOnWet, floodedCell, getOutOfWater, holdsWater, isWater, leaveShore, stepOutToDig } = require('./water')
 
 // Where each ore is most common in Java Edition 1.21, read from the Minecraft wiki pages
 // minecraft.wiki/w/Diamond_Ore, Redstone_Ore, Lapis_Lazuli_Ore, Gold_Ore, Iron_Ore, Copper_Ore, Coal_Ore, Emerald_Ore
@@ -72,7 +73,7 @@ const CAVE_NEAR = 10        // a cave further off than this is not "right there"
 const FAR_FROM_FACE = 16    // further than this from its tunnel: back along its path before the next move
 
 const LAVA = new Set(['lava'])
-const WATER = new Set(['water', 'bubble_column'])
+const WATER = new Set(WATER_NAMES)
 const FALLING = new Set(['gravel', 'sand', 'red_sand', 'suspicious_sand', 'suspicious_gravel'])
 const BLOCKING = ['cobblestone', 'cobbled_deepslate', 'dirt', 'netherrack', 'stone', 'deepslate', 'andesite', 'diorite', 'granite', 'tuff', 'blackstone']
 // never dug on the way: things a player placed or that matter (a chest's items would spill)
@@ -169,7 +170,8 @@ function seenOre (bot, ctx) {
   return findKnownOre(bot, ctx.ids, SEE_RADIUS[ctx.human.level] ?? 20).filter(pos => !ctx.skip.has(key(pos)))
 }
 
-async function digOne (bot, ctx, block) {
+async function digOne (bot, ctx, block, token) {
+  if (!ctx.wetDig) await stepOutToDig(bot, block.position, token, ctx.log)
   const pick = pickTool(bot, block)
   if (pick.item && bot.heldItem?.type !== pick.item.type) await bot.equip(pick.item, 'hand')
   const ms = block.digTime(pick.item?.type ?? null, false, false, false, [], bot.entity.effects ? Object.values(bot.entity.effects) : [])
@@ -188,14 +190,15 @@ async function waitFall (bot, cell) {
 
 // Opens the cells top to bottom. Gravel or sand above a cell comes down when it is dug: it waits for it to land
 // and digs again, and gravel resting over the open column gets dug too, so it never steps under a falling block
-async function openColumn (bot, ctx, cells, token) {
+async function openColumn (bot, ctx, cells, token, throughWater = false) {
+  const clear = b => isOpen(b) || (throughWater && isWater(b))
   for (let tries = 0; tries < 24 && !token.cancelled; tries++) {
-    const shut = cells.find(c => !isOpen(bot.blockAt(c)))
+    const shut = cells.find(c => !clear(bot.blockAt(c)))
     if (!shut) {
       const above = bot.blockAt(cells[0].offset(0, 1, 0))
       if (!isFalling(above)) return true
-      if (digHazard(bot, above)) return false
-      await digOne(bot, ctx, above)
+      if (digHazard(bot, above) || (!throughWater && holdsWater(bot, above.position))) return false
+      await digOne(bot, ctx, above, token)
       ctx.ownCells.add(key(above.position))
       await waitFall(bot, cells[0])
       continue
@@ -204,7 +207,7 @@ async function openColumn (bot, ctx, cells, token) {
     if (!b || LAVA.has(b.name) || WATER.has(b.name) || !b.diggable || NEVER_DIG.test(b.name)) return false
     if (digHazard(bot, b)) return false  // the same answer the dig guard would give, as a wall to turn at
     const fallingAbove = isFalling(bot.blockAt(shut.offset(0, 1, 0)))
-    await digOne(bot, ctx, b)
+    await digOne(bot, ctx, b, token)
     ctx.ownCells.add(key(shut))
     if (fallingAbove) await waitFall(bot, shut)
     else if (!canFlow(bot)) await sleep(60)
@@ -313,10 +316,7 @@ function visibleLavaNear (bot, r = 2) {
 // The reflexes checked before every move
 async function keepSafe (bot, ctx, token) {
   if (onFire(bot)) await douse(bot, ctx, token)
-  if (bot.entity.isInWater) {
-    await backOut(bot, ctx, token)
-    ctx.plan = null
-  }
+  if (await getOutOfWater(bot, ctx, token, backOut)) ctx.plan = null
   for (const cell of visibleLavaNear(bot)) {
     if (token.cancelled) return
     if (await placeInto(bot, ctx, cell, token) || await pourOnLava(bot, ctx, cell, token)) {
@@ -331,17 +331,23 @@ async function keepSafe (bot, ctx, token) {
 // or a fall of 3 blocks or less). Returns 'ok', 'lava', 'water', 'placed', 'dig' or 'drop'
 async function openWay (bot, ctx, cells, feet, token) {
   const floor = feet.offset(0, -1, 0)
+  let wet = false
   for (const c of cells) {
     if (liquidAround(bot, c, LAVA, [floor])) {
       ctx.stats.lavaBlocked++
       ctx.say?.('Lava behind the wall, going around it')
       return 'lava'
     }
-    if (liquidAround(bot, c, WATER, [floor])) return 'water'
+    const roof = bot.blockAt(c.offset(0, 1, 0))
+    if (liquidAround(bot, c, WATER, [floor]) || (isFalling(roof) && holdsWater(bot, roof.position))) {
+      if (!ctx.wetDig) return 'water'
+      wet = true
+    }
     const b = bot.blockAt(c)
     if (b && NEVER_DIG.test(b.name)) return 'placed'
   }
-  if (!await openColumn(bot, ctx, cells, token)) return 'dig'
+  ctx.wetDig = wet ? ctx.wetDig - 1 : 0  // back on dry rock it is careful again
+  if (!await openColumn(bot, ctx, cells, token, wet)) return 'dig'
   const fb = bot.blockAt(floor)
   if (isSolid(fb)) return 'ok'
   if (fb && (LAVA.has(fb.name) || WATER.has(fb.name))) {
@@ -431,7 +437,7 @@ async function descendStep (bot, ctx, plan, token) {
   const ahead = plan.at.offset(d.x, 0, d.z)
   const target = ahead.offset(0, -1, 0)
   const r = await openWay(bot, ctx, [ahead.offset(0, 1, 0), ahead, target], target, token)
-  if (r !== 'ok') return turnMain(ctx, plan, r)
+  if (r !== 'ok') return turnMain(bot, ctx, plan, r)
   await stepInto(bot, landingCell(bot, target), token)
   arrive(bot, ctx, d)
   bot._tunnelMap?.add(bot, 'stair', feetCell(bot), d)
@@ -455,8 +461,13 @@ function resetGrid (plan) {
 }
 
 // The way ahead is blocked: the main tunnel (or the staircase) turns left or right and a new branch grid starts
-function turnMain (ctx, plan, why) {
+function turnMain (bot, ctx, plan, why) {
   plan.turns++
+  if (why === 'water' && plan.turns >= WATER_TURNS) {  // less strict than lava: water all around is dug on through
+    digOnWet(bot, ctx)
+    plan.turns = 0
+    return
+  }
   if (plan.turns > 6) throw new Error('lava, water or a drop on every side')
   plan.dir = Math.random() < 0.5 ? turnLeft(plan.dir) : turnRight(plan.dir)
   resetGrid(plan)
@@ -529,7 +540,11 @@ async function walkBack (bot, ctx, cells, to, token) {
 
 // One move of branch mining: a staircase step down, a block of branch, or a block of main tunnel
 async function branchStep (bot, ctx, token) {
-  if (!ctx.plan) ctx.plan = newPlan(bot, ctx)
+  if (!ctx.plan) {
+    if (await leaveShore(bot, token, ctx.log, ctx)) recordCell(ctx, feetCell(bot))
+    if (token.cancelled) return
+    ctx.plan = newPlan(bot, ctx)
+  }
   const plan = ctx.plan
   // far from the tunnel (a meal, a fight or a food run took it away): back along its own path first, a single
   // pathfinder walk gives up on long tunnels
@@ -596,7 +611,7 @@ async function branchStep (bot, ctx, token) {
     }
   }
   const r = await tunnelStep(bot, ctx, plan.dir, token)
-  if (r !== 'ok') return turnMain(ctx, plan, r)
+  if (r !== 'ok') return turnMain(bot, ctx, plan, r)
   plan.at = feetCell(bot)
   plan.cur = plan.at
   plan.s++
@@ -770,6 +785,7 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
   if (next) preAimNext(bot, next.pos.offset(0.5, 0.5, 0.5))
   const known = itemIds(bot)
   try {
+    if (!ctx.wetDig) await stepOutToDig(bot, pos, token, ctx.log)
     await bot.dig(again, true)
   } finally {
     preAimNext(bot, null)
@@ -997,6 +1013,13 @@ function planTunnels (bot, ctx) {
   const pick = map.plan(bot, feetCell(bot), BEST_Y[ctx.label] ?? ctx.targetY)
   if (!pick.route) {
     ctx.log?.(`${bot.username} tunnels: digging fresh (${pick.why})`)
+    return
+  }
+  // flooded since it was dug: blocked, and no walk down to find that out
+  const wet = pick.route.find(c => floodedCell(bot, c))
+  if (wet) {
+    map.markBlocked(bot, wet)
+    ctx.log?.(`${bot.username} tunnels: digging fresh (blocked by water at ${fmt(wet)})`)
     return
   }
   ctx.log?.(`${bot.username} tunnels: reusing, ${pick.why}`)
