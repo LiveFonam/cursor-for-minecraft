@@ -205,7 +205,7 @@ final class Encounter {
             return;
         }
         if (!Boolean.TRUE.equals(p.getWorld().getGameRuleValue(GameRule.MOB_GRIEFING))) {
-            set(Tactic.WAIT, shut + "; mobGriefing is off on this world, so a creeper blast breaks no blocks");
+            set(Tactic.WAIT, shut + "; mob_griefing is off on this world, so a creeper blast breaks no blocks");
             return;
         }
         if (s.breaches.isEmpty()) {

@@ -1,8 +1,9 @@
-// Builds the mob director plugin into crew/server/plugins/MobDirector.jar. It compiles
-// against the Paper API the server already unpacked (crew/server/libraries), so it needs no Gradle and no
-// downloads, only a JDK 21: JAVA_HOME or javac on the PATH. MOB_DIRECTOR_SERVER points at another server folder.
+// Builds the mob director plugin into server-agents/plugins/MobDirector.jar, in the agents' Paper 1.21.11 server. It
+// compiles against the Paper API the server already unpacked (server-agents/libraries), so it needs no Gradle and no
+// downloads, only a Java Development Kit (JDK) 21: JAVA_HOME or javac on the PATH. MOB_DIRECTOR_SERVER points at
+// another server folder.
 //
-//   node director/scripts/build.js           build and put the jar in crew/server/plugins
+//   node director/scripts/build.js           build and put the jar in server-agents/plugins
 //   node director/scripts/build.js --test    also run the shelter tests (no server needed)
 
 const fs = require('fs')
@@ -12,7 +13,7 @@ const { spawnSync } = require('child_process')
 const ROOT = path.join(__dirname, '..', '..')
 const SRC = path.join(ROOT, 'director')
 const OUT = path.join(SRC, 'build')
-const SERVER = process.env.MOB_DIRECTOR_SERVER ? path.resolve(process.env.MOB_DIRECTOR_SERVER) : path.join(ROOT, 'crew', 'server')
+const SERVER = process.env.MOB_DIRECTOR_SERVER ? path.resolve(process.env.MOB_DIRECTOR_SERVER) : path.join(ROOT, 'server-agents')
 const LIBS = path.join(SERVER, 'libraries')
 const PLUGINS = path.join(SERVER, 'plugins')
 const SEP = process.platform === 'win32' ? ';' : ':'
@@ -43,7 +44,7 @@ function run (cmd, args) {
 
 const libs = files(LIBS, '.jar')
 if (!libs.some(j => /paper-api/.test(j))) {
-  console.error(`No Paper API in ${LIBS}. Set the server up (crew/scripts/setup-server.sh) and start it once so it unpacks its libraries there, then build again.`)
+  console.error(`No Paper API in ${LIBS}. Set the server up (bridge/danger_sensing_agents/scripts/setup-server.sh with AGENTS_SERVER_DIR=server-agents) and start it once so it unpacks its libraries there, then build again.`)
   process.exit(1)
 }
 const cp = libs.join(SEP)

@@ -1,0 +1,12 @@
+{
+  "name": "cursor-for-minecraft-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mineflayer bots for a Minecraft server",
+  "main": "danger_sensing_agents/agents.js",
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0",
+    "mineflayer": "4.39.0",
+    "mineflayer-pathfinder": "^2.4.5"
+  }
+}

@@ -10,3 +10,7 @@ runs/
 director/build/
 
 _build/
+bridge/danger_sensing_agents/recipes/all-recipes-1.21.11.json
+bridge/danger_sensing_agents/agents.config.json
+bridge/danger_sensing_agents/bench.json
+server-agents/

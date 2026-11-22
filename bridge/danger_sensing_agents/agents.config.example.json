@@ -1,0 +1,15 @@
+{
+  "host": "127.0.0.1",
+  "port": 25566,
+  "rcon_port": 25576,
+  "version": "1.21.11",
+  "server_memory": "1G",
+  "owner": "YourName",
+  "bots": ["Agent1", "Agent2"],
+  "friends": [],
+  "human": "light",
+  "kill_radius": 50,
+  "guard_radius": 16,
+  "fighter_run": "weights/fighter",
+  "translator_model": "claude-haiku-5-5"
+}

@@ -1,0 +1,37 @@
+{
+  "about": "The frozen bench world of the live tests of the agents. Paper makes it once from this seed in server-agents/bench/agentsbench, livetest.js keeps a pristine copy in server-agents/bench-pristine and restores it before every test, so every run starts from the same blocks at the same spot. The spot is found once by livetest.js bench_setup (the first flat grass spot on a square spiral around the world spawn) and written here.",
+  "seed": 12345,
+  "level_name": "agentsbench",
+  "world_dir": "bench",
+  "spot": null,
+  "spawn": null,
+  "look": "south",
+  "bench_job": "!Agent1 mine iron 8",
+  "bench_minutes": 15,
+  "bench_kit": [
+    [
+      "iron_pickaxe",
+      1
+    ],
+    [
+      "stone_pickaxe",
+      1
+    ],
+    [
+      "torch",
+      48
+    ],
+    [
+      "bread",
+      16
+    ],
+    [
+      "cobblestone",
+      32
+    ],
+    [
+      "water_bucket",
+      1
+    ]
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "round_ticks": 600,
+  "ticks_per_decision": 2,
+  "arena_half": 12,
+  "armor": "iron",
+  "spawn_min": 4.0,
+  "spawn_max": 10.0,
+  "face_noise": 60.0,
+  "mob_spawn_min": 6.0,
+  "mob_spawn_max": 14.0,
+  "arrows": 6,
+  "difficulty": "normal",
+  "mobs": ["zombie", "skeleton", "creeper", "enderman"],
+  "bots": ["duelist", "guard"]
+}

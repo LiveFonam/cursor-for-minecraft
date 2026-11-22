@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 // The shelter and breach analysis on hand built block maps, no server:  node director/scripts/build.js --test
-// A flat world like the crew test server: bedrock at -64, dirt -63 and -62, grass -61, the player stands at -60.
+// A flat world like the agents test server: bedrock at -64, dirt -63 and -62, grass -61, the player stands at -60.
 public final class ShelterTest {
     static int passed = 0, failed = 0;
 

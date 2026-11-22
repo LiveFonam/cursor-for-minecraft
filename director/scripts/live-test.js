@@ -1,7 +1,7 @@
 // The mob director on a real server, end to end. Needs the server running with the MobDirector plugin
 // (node director/scripts/build.js), a flat world, RCON on, and nobody else on it (see director/README.md).
-// CrewTester joins as the target player; each scene builds the demo arena over RCON, places the "existing" mobs,
-// starts the director against CrewTester and reads `director status json` once a second.
+// AgentTester joins as the target player. Each scene builds the demo arena over RCON, places the "existing" mobs,
+// starts the director against AgentTester and reads `director status json` once a second.
 //
 //   node director/scripts/live-test.js            every scene
 //   node director/scripts/live-test.js gate_open  one scene, or several joined by commas
@@ -18,20 +18,17 @@ const path = require('path')
 const { Rcon } = require('./rcon')
 
 const ROOT = path.join(__dirname, '..', '..')
-const SERVER = process.env.MOB_DIRECTOR_SERVER ? path.resolve(process.env.MOB_DIRECTOR_SERVER) : path.join(ROOT, 'crew', 'server')
-// Mineflayer comes from the crew (npm install in crew/ first)
+const SERVER = process.env.MOB_DIRECTOR_SERVER ? path.resolve(process.env.MOB_DIRECTOR_SERVER) : path.join(ROOT, 'server-agents')
+// Mineflayer comes from the bridge (npm ci in bridge/ first)
 let mineflayer
-try { mineflayer = require(path.join(ROOT, 'crew', 'node_modules', 'mineflayer')) } catch {
-  console.error('Mineflayer is missing: run npm install in crew/ first')
+try { mineflayer = require(path.join(ROOT, 'bridge', 'node_modules', 'mineflayer')) } catch {
+  console.error('Mineflayer is missing: run npm ci in bridge/ first')
   process.exit(1)
 }
-const crewConfig = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'crew', 'crew.config.json'), 'utf8')) } catch { return {} } })()
-const CONFIG = {
-  host: process.env.CREW_HOST || crewConfig.host || '127.0.0.1',
-  port: parseInt(process.env.CREW_PORT || crewConfig.port || 25565, 10),
-  version: process.env.CREW_VERSION || crewConfig.version || '1.21.4'
-}
-const TESTER = 'CrewTester'
+// Host, port and game version come from the agents' settings (bridge/danger_sensing_agents/config.js)
+const CONFIG = require(path.join(ROOT, 'bridge', 'danger_sensing_agents', 'config')).loadConfig({ ownerRequired: false })
+const OUT_DIR = process.env.AGENTS_TESTS_DIR || path.join(ROOT, 'runs', 'agents-tests')
+const TESTER = 'AgentTester'
 const Y = -60
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const log = (...a) => console.log(`[director ${new Date().toTimeString().slice(0, 8)}]`, ...a)
@@ -122,8 +119,8 @@ async function arena (live, { gate = 'open', walls = 'single', roofless = true }
   // test world setup only: monsters need a difficulty above peaceful, and night keeps zombies from burning
   await c('difficulty normal')
   // and no natural spawns, so the only mobs are the ones a scene places (or the director calls in)
-  // 1.21.11 renamed the gamerules (spawn_mobs), 1.21.4 still has doMobSpawning
-  if (/Incorrect|Unknown/i.test(await c('gamerule doMobSpawning false'))) await c('gamerule spawn_mobs false')
+  const rule = await c('gamerule spawn_mobs false')
+  if (/incorrect|unknown|invalid|expected|error/i.test(rule)) throw new Error(`could not turn off natural spawns: ${rule}`)
   await c('time set 18000')
   await c('weather clear')
   await c(`gamemode survival ${TESTER}`)
@@ -137,9 +134,7 @@ async function arena (live, { gate = 'open', walls = 'single', roofless = true }
 }
 
 // a summon with data skips the normal spawn setup, so a skeleton gets its bow here
-// (1.21.5 moved hand items to equipment:{mainhand:...}; 1.21.4 still reads HandItems)
-const minor = parseInt(String(CONFIG.version).split('.')[2] || '0', 10)
-const BOW = minor >= 5 ? ',equipment:{mainhand:{id:"minecraft:bow",count:1}}' : ',HandItems:[{id:"minecraft:bow",count:1},{}]'
+const BOW = ',equipment:{mainhand:{id:"minecraft:bow",count:1}}'
 const summon = (live, type, x, z, y = Y) => live.cmd(`summon ${type} ${x + 0.5} ${y} ${z + 0.5} {PersistenceRequired:1b${type === 'skeleton' ? BOW : ''}}`)
 
 const SCENES = {
@@ -186,7 +181,7 @@ const SCENES = {
     await summon(live, 'creeper', -10, -16)
     await live.cmd(`director start ${TESTER}`)
     await live.watch(s => s.tactic === 'BREACH' && !s.ignited, 15000, 'BREACH')
-    // a hit from the player (CrewTester), the way a sword or a bow kills it
+    // a hit from the player (AgentTester), the way a sword or a bow kills it
     await live.cmd(`damage @e[type=creeper,tag=director,limit=1] 100 minecraft:player_attack by ${TESTER}`)
     const s = await live.watch(s => /killed/.test(s.lastBreach || ''), 10000, 'breach failed')
     const gateIntact = await live.blockIs(0, Y, -4, 'oak_fence_gate')
@@ -327,7 +322,7 @@ async function main () {
     }
     await live.cmd('director stop')
   }
-  const out = path.join(ROOT, 'runs', 'crew-tests', 'director_live.json')
+  const out = path.join(OUT_DIR, 'director_live.json')
   fs.mkdirSync(path.dirname(out), { recursive: true })
   fs.writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), results }, null, 2))
   log(`${pick.length - failed}/${pick.length} scenes passed, results in ${path.relative(ROOT, out)}`)
