@@ -1,0 +1,21 @@
+{
+  "trainer": "lean",
+  "seed": 101100,
+  "smoke": false,
+  "n_envs": 192,
+  "n_steps": 32,
+  "batch_size": 1024,
+  "n_epochs": 4,
+  "fighter_steps": 2000000,
+  "drill_steps": 4000000,
+  "test_every": 500000,
+  "checkpoint_every": 250000,
+  "snapshot_every": 250000,
+  "plan": "combo_walls",
+  "id": "803315bf4d364015b575f85f0bb86b07",
+  "arena": true,
+  "reward": {
+    "weak_swing": 0.002911
+  },
+  "fight_setup": "diamond_20_walls"
+}

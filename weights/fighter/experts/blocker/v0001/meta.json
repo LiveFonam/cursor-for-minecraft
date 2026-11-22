@@ -1,0 +1,45 @@
+{
+  "name": "blocker",
+  "version": 1,
+  "sha256": "09cafa05bf00fd24ff53cdf10a31b2ba469781681f2a922b6015bb8532d54f70",
+  "weights": "e273bfb3ace679004d139321535c6bdddc0daf2ef92773dcb55b7d5a5517e7fc",
+  "locks": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      6,
+      0
+    ],
+    [
+      9,
+      0
+    ],
+    [
+      10,
+      0
+    ]
+  ],
+  "report": {
+    "passed": true,
+    "inherited_from": "g00-01",
+    "version": 1
+  },
+  "source": {
+    "campaign": "803315bf4d364015b575f85f0bb86b07",
+    "inherited_from": "g00-01"
+  }
+}

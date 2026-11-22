@@ -1,0 +1,11 @@
+{
+  "steps": 2002944,
+  "stage": "arena",
+  "trainer": "lean",
+  "campaign": "803315bf4d364015b575f85f0bb86b07",
+  "experts": {
+    "mob": null,
+    "shooter": null,
+    "blocker": 1
+  }
+}
