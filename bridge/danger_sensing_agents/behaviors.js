@@ -31,7 +31,7 @@ const { mobFight, stopMobFight, netCanFight } = require('./skills/mob_fight')
 const { mineJob, goTo } = require('./skills/mine')
 const { walkTo, rescueMoves } = require('./skills/move')
 const { leaveLava } = require('./hazards')
-const { foods, foodPointsCarried, foodSupply, supplyText, needsFood, eat, animalOnTheWay, huntOnTheWay, huntText, gaveUpOn, restockFood, GIVE_UP_MS } = require('./skills/food')
+const { HUNT_ENOUGH, foods, foodPointsCarried, foodSupply, supplyText, needsFood, eat, animalOnTheWay, huntOnTheWay, huntText, gaveUpOn, restockFood, GIVE_UP_MS } = require('./skills/food')
 const { foodNeed, returnFood, eatReason, REGEN_FOOD, GO_DOWN_MARGIN, FOOD_RECOVERED, SPRINT_FOOD } = require('./skills/food_plan')
 const { foodMission, foodBeforeDig, woodOnTheWay, ROAM_RING } = require('./skills/food_mission')
 const { targetDepth, bringWood } = require('./skills/mine_branch')
@@ -925,7 +925,7 @@ async function foodBeforeLongDig (ctx, task, kind, token) {
   }
   const home = ctx.foodJob?.home || bot.entity.position
   const work = require('./skills/cook').workFor(ctx)
-  const want = () => Math.max(FOOD_RESERVE, ctx.foodJob?.need || 0)
+  const want = () => Math.min(HUNT_ENOUGH, Math.max(FOOD_RESERVE, ctx.foodJob?.need || 0))
   const enough = () => foodSupply(bot, work).total >= want()
   if (enough()) {
     task.foodChecked = true
@@ -988,7 +988,7 @@ function foodHooks (ctx) {
       const home = ctx.foodJob?.home || bot.entity.position
       // enough to go back down and up again, which can be more than the reserve
       const back = returnFood(bot, home, face) + GO_DOWN_MARGIN
-      const want = Math.max(FOOD_RESERVE, ctx.foodJob?.need || 0, back)
+      const want = Math.min(HUNT_ENOUGH, Math.max(FOOD_RESERVE, ctx.foodJob?.need || 0, back))
       const work = require('./skills/cook').workFor(ctx)
       agents.event(bot, 'normal', 'restock', `${supplyText(foodSupply(bot, work), want)}, getting food before I go back down`, 30000)
       bot.pathfinder.setMovements(agents.noDigMoves(bot))

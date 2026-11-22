@@ -242,11 +242,20 @@ test('on the way: a close animal in sight, and none that is far, a baby, behind 
   assert.equal(animalOnTheWay(s.bot), null, 'the bag holds its reserve')
 })
 
-test('on the way: a bag of 16 bread is no reason to walk past a close cow', () => {
+test('on the way: it takes a close cow up to 36 food points and leaves it alone past that', () => {
   const { bot } = makeBot()
-  bot.give('bread', 16)
+  bot.give('bread', 7)
   const cow = animal(bot, 'cow', 4.5, 0.5)
   assert.equal(animalOnTheWay(bot), cow)
+  bot.give('bread', 1)
+  assert.equal(animalOnTheWay(bot), null)
+})
+
+test('a long job never asks for more than 36 food points', () => {
+  const { DangerAssessor } = require('../threats')
+  const { bot } = makeBot()
+  assert.equal(new DangerAssessor(bot, { reserve: 60 }).wantFood(), 36)
+  assert.equal(new DangerAssessor(bot, { reserve: 30 }).wantFood(), 30)
 })
 
 test('a hunt that was called off says so, it did not time out', async () => {
