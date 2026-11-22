@@ -103,8 +103,8 @@ class Match {
       await sleep(JOIN_GAP_MS)
     }
     const allowed = this.isMob ? new Set(['axe']) : null
-    this.fa = new Fighter(this.botA, this.isMob ? null : this.nameB, { arena: this.center, allowedWeapons: allowed })
-    if (!this.isMob) this.fb = new Fighter(this.botB, this.nameA, { arena: this.center })
+    this.fa = new Fighter(this.botA, this.isMob ? null : this.nameB, { arena: this.center, allowedWeapons: allowed, planRules: false })
+    if (!this.isMob) this.fb = new Fighter(this.botB, this.nameA, { arena: this.center, planRules: false })
     this.watchDeaths()
   }
 

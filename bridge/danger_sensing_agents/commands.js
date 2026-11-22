@@ -266,7 +266,15 @@ function craftLine (text, targets) {
   return { type: 'command', targets, command: { name: 'craft', args: { item: c.item } } }
 }
 
-function parseMessage (message, botNames) {
+// What the shortcuts make of plain words. With viaTranslator the line goes to the model, and the shortcut's answer
+// rides along for when the model fails
+function plainLine (text, targets, viaTranslator) {
+  const shortcut = craftLine(text, targets) || gatherLine(text, targets)
+  if (!shortcut) return null
+  return viaTranslator ? { type: 'translate', targets, text, shortcut } : shortcut
+}
+
+function parseMessage (message, botNames, { viaTranslator = false } = {}) {
   const text = String(message || '').trim()
   const byLower = new Map(botNames.map(n => [n.toLowerCase(), n]))
   if (text.startsWith(PREFIX)) {
@@ -284,13 +292,13 @@ function parseMessage (message, botNames) {
     return { type: 'command', targets, command }
   }
   const agents = text.match(/^@agents\b[\s,:]*(.*)$/i)
-  if (agents) return agents[1] ? (craftLine(agents[1], 'all') || gatherLine(agents[1], 'all') || { type: 'translate', targets: 'all', text: agents[1] }) : null
+  if (agents) return agents[1] ? (plainLine(agents[1], 'all', viaTranslator) || { type: 'translate', targets: 'all', text: agents[1] }) : null
   const named = text.match(/^@?(\w+)[\s,:]+(.+)$/)
   if (named && byLower.has(named[1].toLowerCase()) && !named[2].trim().startsWith(PREFIX)) {
     const targets = [byLower.get(named[1].toLowerCase())]
-    return craftLine(named[2].trim(), targets) || gatherLine(named[2].trim(), targets) || { type: 'translate', targets, text: named[2].trim() }
+    return plainLine(named[2].trim(), targets, viaTranslator) || { type: 'translate', targets, text: named[2].trim() }
   }
-  return craftLine(text, 'all') || gatherLine(text, 'all')
+  return plainLine(text, 'all', viaTranslator)
 }
 
 // A command back to its "!" form, for chat replies and the translator's echo

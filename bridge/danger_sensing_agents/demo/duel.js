@@ -8,6 +8,7 @@ const { spawn } = require('child_process')
 const { EventEmitter } = require('events')
 
 const TICKS_PER_STEP = 2
+const TRAINED_WEAPONS = ['axe', 'crossbow']  // the weapons of the fighter's last training stage
 
 function policyCommand (cfg) {
   const beside = path.join(path.dirname(cfg.policy), 'fighter_src')
@@ -16,7 +17,7 @@ function policyCommand (cfg) {
   return {
     file: cfg.python,
     args: [cfg.policy, '--run', cfg.run],
-    env: { ...process.env, PYTHONPATH: pythonPath },
+    env: { ...process.env, PYTHONPATH: pythonPath, ...(cfg.neuronsPort ? { DEMO_NEURONS_PORT: String(cfg.neuronsPort) } : {}) },
     cwd: cfg.sourceRoot
   }
 }
@@ -32,7 +33,9 @@ function spawnDuel (cfg) {
   })
   child.on('exit', code => handle.emit('exit', code))
   child.on('error', () => handle.emit('exit', 1))
+  child.stdin.on('error', () => {})
   handle.go = () => { try { child.stdin.write('go\n') } catch {} }
+  handle.hp = value => { try { child.stdin.write(`hp ${Number(value)}\n`) } catch {} }
   handle.stop = () => { if (child.exitCode === null) child.kill('SIGTERM') }
   return handle
 }
@@ -72,7 +75,15 @@ async function main (cfg) {
   await new Promise(resolve => bot.once('spawn', resolve))
   applyMineflayerFixes(bot)
 
-  const fighter = new Fighter(bot, cfg.enemy, { arena: { x: cfg.arena.x, y: cfg.arena.y, z: cfg.arena.z, half: cfg.arena.half } })
+  const arena = { x: cfg.arena.x, y: cfg.arena.y, z: cfg.arena.z, half: cfg.arena.half }
+  // the fighters train with the crossbow and sword rules, so the real fight runs them too
+  const fighter = new Fighter(bot, cfg.enemy, {
+    arena,
+    planRules: true,
+    allowedWeapons: new Set(TRAINED_WEAPONS),
+    rangeRules: true,
+    gunForceRange: Number(process.env.DEMO_GUN_RANGE) || undefined
+  })
   fighter.setFairHealth(!!info?.fair, 'player', false)
   let fighting = false
   let thinking = false
@@ -86,7 +97,14 @@ async function main (cfg) {
       .catch(err => log(err.message))
       .finally(() => { thinking = false })
   })
+  const hasScreen = !!cfg.neuronsPort && path.basename(cfg.policy) === 'neuron_policy.py'
   readline.createInterface({ input: process.stdin }).on('line', line => {
+    const hp = line.match(/^hp (\d+(?:\.\d+)?)$/)
+    if (hp) {
+      // for the page only: the loader keeps it away from the network's inputs
+      if (hasScreen) try { policy.proc?.stdin.write(JSON.stringify({ hp: Number(hp[1]) }) + '\n') } catch {}
+      return
+    }
     if (line.trim() !== 'go' || fighting) return
     fighter.reset()
     fighter.selectSlot(SLOT_AXE)

@@ -242,6 +242,7 @@ function liquidNext (bot, pos) {
 // A walk that recovers: up to tries + 1 tries, unstuck between them, the last one with the rescue moves when given.
 // Resolves true on arrival, false when cancelled, throws the last failure
 async function walkTo (bot, goal, token, { ms = GOTO_MS, tries = 2, rescue = null, log = () => {} } = {}) {
+  await bot.agentsBeforeWalk?.(goal, token)    // a scene with a door the pathfinder cannot use gets the agent through it
   let last = null
   const before = bot.pathfinder.movements
   try {

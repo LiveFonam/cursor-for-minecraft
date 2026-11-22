@@ -174,7 +174,8 @@ async function placeBeside (bot, name, avoid, token, log = () => {}) {
   for (let tries = 1; ; tries++) {
     const item = bot.inventory.items().find(i => i.name === name)
     if (!item) throw new Error(`I have no ${label}`)
-    const spot = freeSpot(bot, p => avoid(p) || refused.has(p.toString()))
+    const skip = p => avoid(p) || refused.has(p.toString())
+    const spot = freeSpot(bot, skip) || await digRoom(bot, skip, log)
     if (!spot) throw new Error(`no free spot for a ${label}`)
     if (!await canReach(bot, spot, token, log)) {
       if (tries >= PLACE_TRIES) throw new Error(`no way to a free spot for a ${label}`)
@@ -193,6 +194,32 @@ async function placeBeside (bot, name, avoid, token, log = () => {}) {
     }
   }
 }
+
+// No free floor nearby, as in a tight tunnel: it digs one wall block beside its feet and the hole is the spot. Never a
+// block holding back lava, one under sand or gravel, one with nothing solid below it, or anything useful like a chest
+async function digRoom (bot, avoid, log = () => {}) {
+  const { pickTool } = require('./mine')
+  const { digHazard } = require('../hazards')
+  const feet = bot.entity.position.floored()
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const p = feet.offset(dx, 0, dz)
+    const here = bot.blockAt(p)
+    const up = bot.blockAt(p.offset(0, 1, 0))
+    const below = bot.blockAt(p.offset(0, -1, 0))
+    if (!here || !up || !below || avoid(p)) continue
+    if (here.boundingBox !== 'block' || !here.diggable || INTERACTIVE.test(here.name)) continue
+    if (below.boundingBox !== 'block' || /sand|gravel|concrete_powder/.test(up.name)) continue
+    if (LAVA_SIDES.some(([x, y, z]) => bot.blockAt(p.offset(x, y, z))?.name === 'lava') || digHazard(bot, here)) continue
+    const pick = pickTool(bot, here)
+    if (pick.error) continue
+    if (pick.item && bot.heldItem?.type !== pick.item.type) await bot.equip(pick.item, 'hand')
+    await bot.dig(here, true)
+    log(`${bot.username} dug into the wall at ${p} to make room`)
+    return p
+  }
+  return null
+}
+const LAVA_SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
 
 // The game refuses a block that would overlap a player or a mob. Drops, orbs and arrows do not count
 function entityInCell (bot, p) {
@@ -365,4 +392,4 @@ async function pickUpTable (bot, job, token) {
   return true
 }
 
-module.exports = { WOODS, CRAFTABLE, GATHERABLE, INTERACTIVE, planItems, chooseRecipe, describeRecipe, craftAll, ensureTable, pickUpTable, freeSpot, placeBeside, canReach, woodOf, resync, settleBag, pickRecipe }
+module.exports = { digRoom, WOODS, CRAFTABLE, GATHERABLE, INTERACTIVE, planItems, chooseRecipe, describeRecipe, craftAll, ensureTable, pickUpTable, freeSpot, placeBeside, canReach, woodOf, resync, settleBag, pickRecipe }

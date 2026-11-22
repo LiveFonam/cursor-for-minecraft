@@ -31,6 +31,7 @@ const STONE_PICK_COBBLE = 3  // what a stone pickaxe takes, all the wooden picka
 const SPARE_COBBLE = 3       // carried on a trip for ore, so a stone pickaxe that breaks underground can be replaced
 const COBBLE = ['cobblestone', 'cobbled_deepslate', 'blackstone']
 // How many blocks a chest is worth walking to, by what is in it: past this, getting the item another way is cheaper
+const EASY_IRON = 12  // a plan's iron step also takes the iron right in front of it, up to this many for the step
 const TRIP = { wood: 48, cobblestone: 48, coal: 96, iron: 160, diamond: 320 }
 const OTHER_TRIP = 96
 // What stays with the owner even when it would help: their gear
@@ -413,7 +414,7 @@ function stepCommand (s, requester) {
   switch (s.kind) {
     case 'take': return { name: 'take', args: { pos: s.pos, items: s.items } }
     case 'ask': return { name: 'ask', args: { items: s.items } }
-    case 'gather': return { name: 'gather', args: { kind: s.what, count: s.count } }
+    case 'gather': return { name: 'gather', args: { kind: s.what, count: s.count, ...(s.what === 'iron' ? { takeEasy: EASY_IRON } : {}) } }
     case 'prep': return { name: 'prep', args: { item: s.item, times: s.times } }
     case 'craft': return { name: 'craft', args: { item: s.item, keep: true, requester } }
     case 'axe': return { name: 'axe', args: s.chop ? { chop: s.chop } : {} }

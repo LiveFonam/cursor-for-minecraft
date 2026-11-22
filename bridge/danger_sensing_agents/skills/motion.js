@@ -68,6 +68,9 @@ const NEXT_TURN_TICKS = 8     // in the last ticks of a dig the camera starts to
 const NEXT_TURN_MAX = 0.3     // but stays this close to the block still breaking, about its edge
 const FACES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
 const FACE_SPOTS = [[0, 0], [0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3]]
+const ORE_SIGHT_CHECKS = 48    // line of sight checks one ore search may run
+const ORE_FIND_COUNT = 1000    // buried ore must not crowd visible ore out of the search
+const ORE_MEMORY = 4096        // ore positions it keeps in mind
 
 const wrap = a => Math.atan2(Math.sin(a), Math.cos(a))
 const isFlee = goal => goal?.constructor?.name === 'GoalInvert'
@@ -107,6 +110,57 @@ function seesBlock (bot, block) {
     }
   }
   return false
+}
+
+const oreMemory = new WeakMap()
+const posKey = p => `${p.x},${p.y},${p.z}`
+
+function hasOpenFace (bot, pos) {
+  return FACES.some(([x, y, z]) => {
+    const side = bot.blockAt(pos.offset(x, y, z), false)
+    return !!side && side.boundingBox !== 'block'
+  })
+}
+
+// Which of these ore positions it knows: in view right now, or seen earlier and still there. Only ore with an open face
+// costs a sight check, at most cap per search. When more are waiting, those checked longest ago go first, so visible ore
+// past the limit is picked up by a following search instead of being lost. The result keeps the order of found
+function knownOre (bot, found, cap = ORE_SIGHT_CHECKS) {
+  const dimension = bot.game?.dimension ?? ''
+  let memory = oreMemory.get(bot)
+  if (!memory || memory.dimension !== dimension) {
+    memory = { dimension, seen: new Set(), asked: new Map(), turn: 0 }
+    oreMemory.set(bot, memory)
+  }
+  memory.turn++
+  const known = new Set()
+  const waiting = []
+  for (const pos of found) {
+    const id = posKey(pos)
+    if (memory.seen.has(id)) known.add(id)
+    else if (hasOpenFace(bot, pos)) waiting.push({ pos, id, asked: memory.asked.get(id) ?? 0 })
+  }
+  waiting.sort((a, b) => a.asked - b.asked)
+  for (const { pos, id } of waiting.slice(0, cap)) {
+    memory.asked.set(id, memory.turn)
+    const block = bot.blockAt(pos)
+    if (block && seesBlock(bot, block)) {
+      memory.seen.add(id)
+      known.add(id)
+    }
+  }
+  for (const id of memory.seen) {
+    if (memory.seen.size <= ORE_MEMORY) break
+    memory.seen.delete(id)
+  }
+  if (memory.asked.size > ORE_MEMORY) memory.asked.clear()
+  return found.filter(pos => known.has(posKey(pos)))
+}
+
+// The ore of these ids within radius that it knows about, nearest first
+function findKnownOre (bot, ids, radius, cap = ORE_SIGHT_CHECKS) {
+  if (!ids.length) return []
+  return knownOre(bot, bot.findBlocks({ matching: ids, maxDistance: radius, count: ORE_FIND_COUNT }), cap)
 }
 
 // Is a drop inside the box the game hands items over in, for a body standing at p?
@@ -787,6 +841,8 @@ module.exports = {
   bendDiagonals,
   clearLine,
   seesBlock,
+  knownOre,
+  findKnownOre,
   inPickupBox,
   pickupSpot,
   headroom,

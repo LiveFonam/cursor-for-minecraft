@@ -24,10 +24,12 @@ const { sleep } = require('./human')
 const { goTo, walkTo, rescueMoves } = require('./move')
 const { digHazard } = require('../hazards')
 const { findContainers, storeAtHome } = require('./storage')
-const { pickTool, equipFor, collectAround, stepInto, backOut, MineError, SEE_RADIUS, REACH, AIR, TORCH_EVERY, torchGapFor, countTunnel, torchPlaced, itemIds, dropFilter, bagShort } = require('./mine')
-const { canFlow, clearLine, preAim, preAimNext, seesBlock, walkCells } = require('./motion')
+const { pickTool, equipFor, collectAround, collectOwed, oweDrop, settleDrop, stepInto, backOut, MineError, SEE_RADIUS, REACH, AIR, TORCH_EVERY, torchGapFor, countTunnel, torchPlaced, itemIds, dropFilter, bagShort } = require('./mine')
+const { canFlow, clearLine, findKnownOre, preAim, preAimNext, seesBlock, walkCells } = require('./motion')
 const { bestPickaxeItem } = require('./gather_kinds')
 const { announce } = require('../announcer')
+const { ORE_KINDS, oreKind, kindOfJob } = require('./ore_marks')
+const { MAX_APPROACH } = require('./tunnel_map')
 
 // Where each ore is most common in Java Edition 1.21, read from the Minecraft wiki pages
 // minecraft.wiki/w/Diamond_Ore, Redstone_Ore, Lapis_Lazuli_Ore, Gold_Ore, Iron_Ore, Copper_Ore, Coal_Ore, Emerald_Ore
@@ -61,6 +63,7 @@ const MAX_FAILURES = 12
 const MAX_SAFE_DROP = 3     // a fall of 3 blocks does no damage
 const KEEP_BLOCKS = 32      // cobblestone and the like kept for blocking lava and bridging
 const MAX_DIG_MS = 8000     // blocks slower than this with its best tool are left alone (obsidian with stone)
+const EASY_STEPS = 2         // the longest walk for extra ore that is right there
 const FALL_TICKS = 16       // long enough for gravel to drop a block or two and land
 const HOME_STEP = 6         // waypoints along its own path on the way home
 const CAVE_MIN_CELLS = 6
@@ -161,30 +164,9 @@ function recordCell (ctx, cell) {
   ctx.path.push(cell.clone())
 }
 
-// Ore it could know about: an open face on a cell it has been in or dug and not too far off, or a face it can see
+// Ore it could know about: a face it can see from here or saw earlier, the walls of its own tunnel included
 function seenOre (bot, ctx) {
-  const radius = SEE_RADIUS[ctx.human.level] ?? 20
-  const found = bot.findBlocks({ matching: ctx.ids, maxDistance: radius, count: 200 })
-  const eye = bot.entity.position.offset(0, 1.62, 0)
-  const out = []
-  let checks = 0
-  for (const pos of found) {
-    if (ctx.skip.has(key(pos))) continue
-    const faces = NEIGHBOURS.map(([dx, dy, dz]) => pos.offset(dx, dy, dz)).filter(p => {
-      const b = bot.blockAt(p)
-      return b && b.boundingBox === 'empty'
-    })
-    if (!faces.length) continue  // buried in rock: nobody could know it is there
-    const d = pos.offset(0.5, 0.5, 0.5).distanceTo(eye)
-    if (d <= 6 && faces.some(f => ctx.ownCells.has(key(f)) || ctx.pathIndex.has(key(f)))) {
-      out.push(pos)
-      continue
-    }
-    if (checks++ > 60) continue
-    const block = bot.blockAt(pos)
-    if (block && seesBlock(bot, block)) out.push(pos)
-  }
-  return out
+  return findKnownOre(bot, ctx.ids, SEE_RADIUS[ctx.human.level] ?? 20).filter(pos => !ctx.skip.has(key(pos)))
 }
 
 async function digOne (bot, ctx, block) {
@@ -431,13 +413,14 @@ function arrive (bot, ctx, d) {
 }
 
 // One block of tunnel in direction d from where it stands
-async function tunnelStep (bot, ctx, d, token) {
+async function tunnelStep (bot, ctx, d, token, kind = 'main') {
   const cur = feetCell(bot)
   const next = cur.offset(d.x, 0, d.z)
   const r = await openWay(bot, ctx, [next.offset(0, 1, 0), next], next, token)
   if (r !== 'ok') return r
   await stepInto(bot, landingCell(bot, next), token)
   arrive(bot, ctx, d)
+  bot._tunnelMap?.add(bot, kind, feetCell(bot), d)
   await torchRightWall(bot, ctx, d, token)
   return 'ok'
 }
@@ -451,6 +434,7 @@ async function descendStep (bot, ctx, plan, token) {
   if (r !== 'ok') return turnMain(ctx, plan, r)
   await stepInto(bot, landingCell(bot, target), token)
   arrive(bot, ctx, d)
+  bot._tunnelMap?.add(bot, 'stair', feetCell(bot), d)
   plan.at = feetCell(bot)
   plan.cur = plan.at
   plan.turns = 0
@@ -483,9 +467,14 @@ function turnMain (ctx, plan, why) {
 function newPlan (bot, ctx) {
   const at = feetCell(bot)
   announce(bot, at.y > ctx.targetY ? `digging down to Y ${ctx.targetY}` : `branch mining at Y ${at.y}`)
+  const phase = at.y > ctx.targetY ? 'descend' : 'branch'
+  const facing = ctx.lastDir || facingDir(bot.entity.yaw)
+  // a level tunnel heads into rock it has not seen yet
+  const dir = (phase === 'branch' && bot._tunnelMap?.freshDir(bot, at, facing)) || facing
+  bot._tunnelMap?.add(bot, phase === 'descend' ? 'stair' : 'main', at, dir)
   return {
-    phase: at.y > ctx.targetY ? 'descend' : 'branch',
-    dir: ctx.lastDir || facingDir(bot.entity.yaw),
+    phase,
+    dir,
     at,        // where it should stand now
     cur: at,   // the main tunnel cell the branches start from
     s: 0,
@@ -545,6 +534,14 @@ async function branchStep (bot, ctx, token) {
   // far from the tunnel (a meal, a fight or a food run took it away): back along its own path first, a single
   // pathfinder walk gives up on long tunnels
   if (bot.entity.position.distanceTo(plan.at.offset(0.5, 0, 0.5)) > FAR_FROM_FACE && ctx.path.length > HOME_STEP) {
+    // respawned far off: no long walk back when a new tunnel here is clearly quicker
+    const away = Math.round(bot.entity.position.distanceTo(plan.at))
+    if (bot._tunnelMap && away > MAX_APPROACH) {
+      ctx.log?.(`${bot.username} tunnels: digging fresh (my tunnel is ${away} blocks away)`)
+      ctx.plan = null
+      ctx.tunnelsChecked = false
+      return
+    }
     await backToFace(bot, ctx, token)
     if (token.cancelled) return
   }
@@ -561,8 +558,8 @@ async function branchStep (bot, ctx, token) {
   if (plan.branch) {
     const b = plan.branch
     const d = b.side < 0 ? turnLeft(plan.dir) : turnRight(plan.dir)
-    if (b.len < t.branchLen) {
-      const r = await tunnelStep(bot, ctx, d, token)
+    if (b.len < t.branchLen && !bot._tunnelMap?.oldRock(bot, feetCell(bot).offset(d.x, 0, d.z), d)) {
+      const r = await tunnelStep(bot, ctx, d, token, 'branch')
       if (r === 'ok') {
         b.len++
         b.cells.push(feetCell(bot))
@@ -586,6 +583,17 @@ async function branchStep (bot, ctx, token) {
     plan.dir = turnRight(plan.dir)
     resetGrid(plan)
     return
+  }
+  // about to run along an old tunnel: on into rock it has not seen, if there is any
+  const map = bot._tunnelMap
+  if (map?.oldRock(bot, plan.cur.offset(plan.dir.x, 0, plan.dir.z), plan.dir)) {
+    const way = map.freshDir(bot, plan.cur, plan.dir)
+    if (way) {
+      plan.dir = way
+      resetGrid(plan)
+      ctx.log?.(`${bot.username} tunnels: turning away from rock already searched`)
+      return
+    }
   }
   const r = await tunnelStep(bot, ctx, plan.dir, token)
   if (r !== 'ok') return turnMain(ctx, plan, r)
@@ -695,16 +703,6 @@ async function surfaceStep (bot, ctx, token) {
   recordCell(ctx, feetCell(bot))
 }
 
-// Drops it left for the game to hand over during the next dig, fetched before it walks away from them
-async function collectOwed (bot, ctx, token) {
-  const owed = ctx.owed || []
-  ctx.owed = []
-  for (const p of owed) {
-    if (token.cancelled) return
-    await collectAround(bot, p, token, { settled: true, digFor: ctx.wantsDrop, dug: ctx.dugFor, enough: ctx.bagDone, log: ctx.log })
-  }
-}
-
 // The next ore to dig after this one, so the camera can start toward it right away: in reach first, then the one closest
 // to the block it just broke, carrying on in the same direction, so a seam is swept once instead of zigzagged
 function nextOre (bot, ctx, done) {
@@ -736,6 +734,9 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
   }
   const block = bot.blockAt(pos)
   if (!block || !ids.includes(block.type)) return 'skip'
+  // a drop lying out of pickup range comes before the next ore
+  await collectOwed(bot, ctx, token, { strayOnly: true })
+  if (token.cancelled) return 'cancelled'
   await equipFor(bot, block)
   const inReach = () => bot.entity.position.offset(0, 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5)) <= REACH
   if (!inReach()) {
@@ -781,6 +782,7 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
     ctx.nextTarget = next?.pos || null
   }
   const centre = pos.offset(0.5, 0.5, 0.5)
+  const owedSpot = oweDrop(bot, ctx, centre, known)  // owed from here on, so a fight during the fetch cannot lose it
   if (next) preAim(bot, next.pos.offset(0.5, 0.5, 0.5))
   try {
     await collectAround(bot, centre, token, { digNext: !!next?.inReach, known, digFor: ctx.wantsDrop, dug: ctx.dugFor, enough: ctx.bagDone, log: ctx.log })
@@ -789,8 +791,71 @@ async function mineTarget (bot, ctx, pos, token, { more = false } = {}) {
   }
   // normally handed over during the next dig. Remembered in case it lands out of range or that dig is very quick
   // The last block of a run is looked at once more before the job ends, in case its drop landed late
-  if (next?.inReach || !more) (ctx.owed || (ctx.owed = [])).push(centre)
+  if (!token.cancelled && !next?.inReach && more) settleDrop(ctx, owedSpot)
   return 'mined'
+}
+
+// Diamonds, gold and lapis it can truly see on a job that leaves them alone: remembered, and the master told once per
+// cluster
+function spotMarkedOre (bot, ctx) {
+  const marks = bot._oreMarks
+  if (!marks || !bot._keepOre) return
+  const cell = key(feetCell(bot))
+  if (cell === ctx.markCell) return
+  ctx.markCell = cell
+  const names = Object.values(ORE_KINDS).flatMap(k => k.ores).filter(n => bot._keepOre({ name: n }))
+  const ids = names.map(n => bot.registry.blocksByName[n]?.id).filter(id => id !== undefined)
+  for (const pos of seenOre(bot, { ...ctx, ids, skip: new Set() })) {
+    const kind = oreKind(bot.blockAt(pos))
+    if (kind) marks.saw(bot, [pos], kind)
+  }
+}
+
+// A diamond, gold or lapis job starts at a remembered spot of that ore, through its tunnels when they lead there.
+// 'mined', 'next' (look again), 'cancelled', or null when none is left
+async function mineMarked (bot, job, ctx, token) {
+  const marks = bot._oreMarks
+  const kind = kindOfJob(job.blocks)
+  if (!marks || !kind) return null
+  const pos = marks.nearest(bot, ctx.skip, kind)
+  if (!pos) return null
+  if (ctx.reuse?.toOre) {
+    await travelTunnel(bot, ctx, token)
+    return token.cancelled ? 'cancelled' : 'next'
+  }
+  ctx.routedTo = ctx.routedTo || new Set()
+  if (bot._tunnelMap && !ctx.routedTo.has(key(pos))) {
+    ctx.routedTo.add(key(pos))
+    const away = feetCell(bot).distanceTo(pos)
+    const route = away > 6 ? bot._tunnelMap.routeNear(bot, feetCell(bot), pos, { enter: 16, endWithin: Math.max(4, away - 4) }) : null
+    if (route?.length > 1) {
+      ctx.log?.(`${bot.username} tunnels: reusing ${route.length} cells toward the remembered ${kind} at ${fmt(pos)}`)
+      ctx.reuse = { route, end: route[route.length - 1], phase: null, toOre: true }
+      await travelTunnel(bot, ctx, token)
+      return token.cancelled ? 'cancelled' : 'next'
+    }
+  }
+  if (!bot.blockAt(pos)) {  // too far to be loaded: walk close enough to check it
+    try {
+      await goTo(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 4), token)
+    } catch {
+      ctx.skip.add(key(pos))
+      return 'next'
+    }
+    if (token.cancelled) return 'cancelled'
+    if (!bot.blockAt(pos)) {
+      ctx.skip.add(key(pos))
+      return 'next'
+    }
+  }
+  if (oreKind(bot.blockAt(pos)) !== kind) {
+    marks.forget(pos)
+    return 'next'
+  }
+  const r = await mineTarget(bot, ctx, pos, token, { more: job.mined + 1 < job.count })
+  if (r === 'mined') marks.forget(pos)
+  else if (r === 'skip') ctx.skip.add(key(pos))
+  return r === 'mined' ? 'mined' : r === 'cancelled' ? 'cancelled' : 'next'
 }
 
 // What goes into the chest: everything but its tools, armour, torches, buckets, food and the biggest stacks of
@@ -865,8 +930,15 @@ async function walkOwnPath (bot, ctx, cells, token) {
 async function goHome (bot, job, ctx, token) {
   ctx.homing = true
   try {
-    const cells = ctx.path.slice().reverse()
-    if (!await walkOwnPath(bot, ctx, cells.slice(nearestIndex(cells, feetCell(bot))), token)) {
+    const back = ctx.path.slice().reverse()
+    const own = back.slice(nearestIndex(back, feetCell(bot)))
+    // a remembered tunnel, when the way it came is longer or stops short of home and every cell of it is still open
+    const via = bot._tunnelMap?.routeNear(bot, feetCell(bot), job.home)
+    const ownArrives = own.length > 0 && own[own.length - 1].distanceTo(job.home) <= 4
+    const shorter = via && (!ownArrives || via.length < own.length) && via.every(c => tunnelCellOpen(bot, c))
+    if (shorter) ctx.log?.(`${bot.username} tunnels: reusing ${via.length} cells on the way home, not ${own.length}`)
+    const cells = shorter ? via : own
+    if (!await walkOwnPath(bot, ctx, cells, token)) {
       const from = nearestIndex(cells, feetCell(bot))
       for (let i = from + HOME_STEP; i < cells.length && !token.cancelled; i += HOME_STEP) {
         const c = cells[i]
@@ -909,6 +981,83 @@ async function backToFace (bot, ctx, token) {
   } finally {
     ctx.homing = false
   }
+}
+
+// A remembered cell is fit to walk: nothing to bump into, no liquid or fire in it or lava beside it, a floor under it
+function tunnelCellOpen (bot, c) {
+  const clear = b => !!b && b.boundingBox === 'empty' && !LAVA.has(b.name) && !WATER.has(b.name) && !/fire|cobweb/.test(b.name)
+  return clear(bot.blockAt(c)) && clear(bot.blockAt(c.offset(0, 1, 0))) && isSolid(bot.blockAt(c.offset(0, -1, 0))) && !liquidAround(bot, c, LAVA)
+}
+
+// Picks the start of this trip: a remembered tunnel, or digging right here. One short log line either way
+function planTunnels (bot, ctx) {
+  ctx.tunnelsChecked = true
+  const map = bot._tunnelMap
+  if (!map || ctx.plan) return
+  const pick = map.plan(bot, feetCell(bot), BEST_Y[ctx.label] ?? ctx.targetY)
+  if (!pick.route) {
+    ctx.log?.(`${bot.username} tunnels: digging fresh (${pick.why})`)
+    return
+  }
+  ctx.log?.(`${bot.username} tunnels: reusing, ${pick.why}`)
+  ctx.reuse = pick
+}
+
+const TUNNEL_LOOK = 6  // cells of a remembered tunnel checked ahead, about what it can see down a dark tunnel
+
+// One stretch along the remembered route, back to the main loop after it so danger, food and ore in sight come first.
+// A shut cell drops the route and it digs from where it got to
+async function travelTunnel (bot, ctx, token) {
+  const r = ctx.reuse
+  const map = bot._tunnelMap
+  const giveUp = (why, cell = null) => {
+    if (cell) map.markBlocked(bot, cell)
+    ctx.reuse = null
+    ctx.plan = null
+    ctx.log?.(`${bot.username} tunnels: digging fresh (${why})`)
+  }
+  r.moves = (r.moves || 0) + 1
+  if (r.moves > r.route.length + 8) return giveUp('the walk is not getting anywhere')
+  const feet = feetCell(bot)
+  const i = nearestIndex(r.route, feet)
+  const at = r.route[i]
+  if (!feet.equals(at)) {
+    const off = Math.round(at.distanceTo(feet))
+    if (off > MAX_APPROACH) return giveUp(`the tunnel is ${off} blocks away`)
+    if (bot.blockAt(at) && !tunnelCellOpen(bot, at)) return giveUp(`blocked at ${fmt(at)}`, at)
+    try {
+      await goTo(bot, new goals.GoalBlock(at.x, at.y, at.z), token, Math.max(20000, off * 600))
+    } catch (err) {
+      if (!token.cancelled) giveUp(`could not reach it: ${err.message}`)
+      return
+    }
+    if (!token.cancelled) recordCell(ctx, feetCell(bot))
+    return
+  }
+  const ahead = r.route.slice(i + 1, i + 1 + TUNNEL_LOOK)
+  const shut = ahead.findIndex(c => !tunnelCellOpen(bot, c))
+  const walk = shut < 0 ? ahead : ahead.slice(0, shut)
+  try {
+    if (walk.length && !(canFlow(bot) && await walkCells(bot, [at, ...walk], token) && standingIn(bot, walk[walk.length - 1]))) {
+      for (const c of walk.slice(nearestIndex(walk, feetCell(bot)))) {
+        if (token.cancelled) return
+        if (!standingIn(bot, c)) await stepInto(bot, c, token)
+      }
+    }
+  } catch (err) {
+    if (!token.cancelled) giveUp(`could not walk it: ${err.message}`)
+    return
+  }
+  if (token.cancelled) return
+  for (const c of walk) recordCell(ctx, c)
+  if (shut >= 0) return giveUp(`blocked at ${fmt(ahead[shut])}`, ahead[shut])
+  if (!standingIn(bot, r.end)) return
+  ctx.reuse = null
+  if (!r.phase) return
+  ctx.lastDir = r.dir
+  if (r.phase === 'branch') ctx.targetY = r.end.y
+  ctx.plan = { phase: r.phase, dir: r.dir, at: r.end, cur: r.end, s: r.s, mainLen: 0, branch: null, branched: new Set([r.s]), turns: 0 }
+  ctx.log?.(`${bot.username} tunnels: at ${fmt(r.end)}, ${r.phase === 'descend' ? 'digging on down' : 'extending the tunnel'}`)
 }
 
 function canStoreAtHome (bot, ctx) {
@@ -1135,9 +1284,68 @@ async function replacePickaxe (bot, ctx, token, job = null) {
   return true
 }
 
+// The iron right in front of it that a job with takeEasy also takes once it has what it asked for: ore it sees right
+// now, with no lava or water beside it, in reach or in reach after a step or two along open floor. It never digs to get
+// closer and never goes looking
+function easyOre (bot, ctx) {
+  const feet = feetCell(bot)
+  const spots = [feet]
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (let i = 1; i <= EASY_STEPS; i++) {
+      const cell = feet.offset(dx * i, 0, dz * i)
+      if (!standable(bot, cell) || liquidAround(bot, cell, LAVA)) break
+      spots.push(cell)
+    }
+  }
+  const eye = bot.entity.position.offset(0, 1.62, 0)
+  for (const pos of seenOre(bot, ctx)) {
+    const centre = pos.offset(0.5, 0.5, 0.5)
+    if (centre.distanceTo(eye) > REACH + EASY_STEPS) continue
+    if (liquidAround(bot, pos, LAVA) || liquidAround(bot, pos, WATER)) continue
+    const block = bot.blockAt(pos)
+    if (!block || digHazard(bot, block) || !seesBlock(bot, block)) continue
+    const spot = spots.find(c => c.offset(0.5, 1.62, 0.5).distanceTo(centre) <= REACH)
+    if (spot) return { pos, spot }
+  }
+  return null
+}
+
+// The job has what it asked for: it also takes the easy ore, up to job.takeEasy for the job. Food, the bag, the pickaxe and
+// the lava check still come first, and when no easy ore is left it moves on at once
+async function takeEasyOre (bot, job, ctx, token, hooks) {
+  const cap = job.takeEasy
+  if (!cap || !job.inBag || job.want >= cap) return
+  const asked = job.want
+  job.want = cap  // the drops of these blocks are wanted too
+  try {
+    while (!token.cancelled && Math.max(job.inBag(), job.mined) < cap) {
+      if (bot.inventory.emptySlotCount() === 0 || !hasHarvestTool(bot, job) || hooks.lowFood?.(job)) break
+      await keepSafe(bot, ctx, token)
+      if (token.cancelled) break
+      const easy = easyOre(bot, ctx)
+      if (!easy) break
+      if (!await ensureAt(bot, ctx, easy.spot, token)) {
+        ctx.skip.add(key(easy.pos))
+        continue
+      }
+      if (token.cancelled) break
+      if (await mineTarget(bot, ctx, easy.pos, token) === 'mined') {
+        job.mined++
+        job.stats.ores++
+      } else ctx.skip.add(key(easy.pos))
+      await collectOwed(bot, ctx, token)
+    }
+  } catch (err) {
+    ctx.log?.(`${bot.username} leaves the easy ${ctx.label}: ${err.message}`)
+  } finally {
+    job.want = asked
+  }
+}
+
 async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
   const ctx = setup(bot, job, ids, human, hooks)
   recordCell(ctx, feetCell(bot))
+  await collectOwed(bot, ctx, token)  // what a fight interrupted comes first
   if (!job.prepared) {
     job.prepared = true
     if (!ctx.surface) await bringWood(bot, ctx, token, job)
@@ -1147,7 +1355,10 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
     // every block it counted is broken: the drops come along, and the bag decides whether the job is over
     if (job.mined >= job.count || (job.inBag && job.inBag() >= job.want)) {
       await collectOwed(bot, ctx, token)
-      if (token.cancelled || !await bagShort(bot, job, token)) break
+      if (token.cancelled || !await bagShort(bot, job, token)) {
+        if (!token.cancelled) await takeEasyOre(bot, job, ctx, token, hooks)
+        break
+      }
     }
     try {
       if (bot.inventory.emptySlotCount() === 0) {
@@ -1177,6 +1388,17 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
       }
       await keepSafe(bot, ctx, token)
       if (token.cancelled) break
+      spotMarkedOre(bot, ctx)
+      const marked = await mineMarked(bot, job, ctx, token)
+      if (marked === 'cancelled') break
+      if (marked === 'next') continue
+      if (marked === 'mined') {
+        job.mined++
+        job.stats.ores++
+        ctx.steps = 0
+        ctx.onMined?.(job)
+        continue
+      }
       const targets = seenOre(bot, ctx)
       if (targets.length) {
         const target = targets.find(p => ctx.nextTarget && p.equals(ctx.nextTarget)) || targets[0]
@@ -1207,6 +1429,11 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
       // a pickaxe in hand before tunnelling, if it has one
       const pick = bestPickaxeItem(bot.inventory.items())
       if (pick && bot.heldItem?.type !== pick.type && !ctx.surface) await bot.equip(pick, 'hand')
+      if (!ctx.surface && !ctx.tunnelsChecked) planTunnels(bot, ctx)
+      if (ctx.reuse) {
+        await travelTunnel(bot, ctx, token)
+        continue
+      }
       if (ctx.surface) {
         ctx.wanders++
         await surfaceStep(bot, ctx, token)
@@ -1244,6 +1471,7 @@ async function branchMineJob (bot, job, ids, human, token, hooks = {}) {
 
 module.exports = {
   branchMineJob,
+  seenOre,
   hasHarvestTool,
   replacePickaxe,
   bringWood,

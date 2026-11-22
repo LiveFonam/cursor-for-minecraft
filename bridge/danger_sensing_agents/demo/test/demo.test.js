@@ -11,10 +11,12 @@ const { parseDemoCommand, HELP_LINES, MOBS, ANIMALS } = require('../words')
 const scene = require('../scene')
 const { DemoController } = require('../controller')
 const { policyCommand } = require('../duel')
+const match = require('../one_v_one')
+const show = require('../show')
 
 const CONFIG = { host: '127.0.0.1', port: 25566, version: '1.21.11', owner: null, bots: ['Agent1'], fighter_run: 'weights/fighter' }
 const STAGE = { x: 10, y: -60, z: 20 }
-const settings = (extra = {}) => ({ ...loadSettings({ DEMO_PLAYER: 'Viewer', ...extra }, CONFIG), stage: STAGE })
+const settings = (extra = {}) => ({ ...loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_FIGHTER_NAME: 'Fighter', ...extra }, CONFIG), stage: STAGE })
 
 class FakeRcon {
   constructor (replies = {}) { this.sent = []; this.replies = replies }
@@ -71,7 +73,7 @@ function rig ({ replies, extra } = {}) {
     agentBot: () => bot,
     stopAgent: async () => { agents.stops++ },
     runTask: async t => { agents.tasks.push(t) },
-    dummyHas: async () => agents.holds
+    forgetChest: () => {}
   }
   const duelOptions = []
   const c = new DemoController({
@@ -100,7 +102,7 @@ test('settings: refuses a remote server, bad names, a bad stage and name clashes
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer' }, { ...CONFIG, host: 'example.invalid' }), /this machine/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'no spaces' }, CONFIG), /Minecraft name/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_STAGE: '1,2' }, CONFIG), /DEMO_STAGE/)
-  assert.throws(() => loadSettings({ DEMO_PLAYER: 'Agent1' }, CONFIG), /four different/)
+  assert.throws(() => loadSettings({ DEMO_PLAYER: 'Agent1' }, CONFIG), /three different/)
   assert.throws(() => loadSettings({ DEMO_PLAYER: 'Viewer', DEMO_CUE_MOB: 'soon' }, CONFIG), /whole number/)
 })
 
@@ -188,6 +190,17 @@ test('scene: a spot for a mob is two free blocks on solid ground', () => {
   assert.equal(scene.openSpot(() => null, { x: 0, y: 0, z: 0 }), null)
 })
 
+test('scene: the agent starts with a stone axe', () => {
+  const a = scene.agentKitCommands('Agent1')
+  assert.ok(a.includes('item replace entity Agent1 hotbar.0 with stone_axe'))
+  assert.ok(!a.some(c => c.includes('diamond_axe')))
+})
+
+test('scene: the 1v1 kit has nothing that places a block', () => {
+  const k = scene.fighterKitCommands('Viewer', { x: 1, y: 100, z: 2 }, 90).join(' ')
+  assert.ok(!/lava|cobblestone|can_place_on|can_break/.test(k))
+})
+
 test('scene: the fight kit is the full kit in the fighter\'s slots', () => {
   const k = scene.fighterKitCommands('Viewer', { x: 1, y: 100, z: 2 }, 90)
   assert.ok(k.includes('item replace entity Viewer hotbar.0 with diamond_axe'))
@@ -207,31 +220,34 @@ test('controller: only the demo player is obeyed', async () => {
   assert.deepEqual(agents.tasks, ['make me a diamond pickaxe'])
 })
 
-test('controller: a task puts him in spectator on the agent, again after a respawn, and hands to the dummy', async () => {
-  const { c, rcon, agents, bot, timers } = rig()
+test('controller: a task puts him in spectator where he stands, !follow goes on the agent, and he receives the item', async () => {
+  let held = 0
+  const { c, rcon, bot, timers } = rig({ replies: { 'clear Viewer minecraft:diamond_pickaxe 0': () => (held ? `Found ${held} matching item(s) on player Viewer` : 'No items were found on player Viewer') } })
   await c.taskStarted('diamond_pickaxe')
   assert.equal(c.state, 'run')
+  assert.ok(rcon.has('gamemode spectator Viewer'))
+  assert.ok(!rcon.has('spectate Agent1 Viewer'))
+  await c.handle('!follow', 'Viewer')
   assert.ok(rcon.index('gamemode spectator Viewer') < rcon.index('spectate Agent1 Viewer'))
-  assert.ok(rcon.has('spectate Agent1 Viewer'))
   rcon.sent.length = 0
   bot.health = 0
   await c.agentSpawned()
-  assert.equal(rcon.sent.length, 0)
+  assert.ok(!rcon.has('spectate'))
   bot.health = 20
   await c.agentSpawned()
   assert.deepEqual(rcon.sent, ['spectate Agent1 Viewer'])
-  assert.equal(timers.intervals.size, 1)
-  assert.equal(timers.timeouts.size, 2)
-  agents.holds = true
+  assert.equal(timers.intervals.size, 0)
+  assert.equal(timers.timeouts.size, 3)
+  held = 1
   await c.taskEnded('done')
   assert.equal(c.state, 'idle')
   assert.equal(timers.intervals.size, 0)
   assert.equal(timers.timeouts.size, 0)
   assert.ok(rcon.has('gamemode creative Viewer'))
-  assert.ok(rcon.sent.some(s => s.includes('tellraw') && s.includes('Dummy has the diamond pickaxe')))
+  assert.ok(rcon.sent.some(s => s.includes('tellraw') && s.includes('you have the diamond pickaxe')))
 })
 
-test('controller: the end of a task says so when the dummy got nothing', async () => {
+test('controller: the end of a task says so when he got nothing', async () => {
   const { c, rcon } = rig()
   await c.taskStarted('diamond_pickaxe')
   await c.taskEnded('done')
@@ -257,10 +273,10 @@ test('controller: the cues send a mob and an animal only during a task', async (
 
 test('controller: a plain task is refused while something else runs', async () => {
   const { c, agents, rcon } = rig()
-  await c.handle('!evil', 'Viewer')
+  c.state = 'duel'
   await c.handle('make me a diamond pickaxe', 'Viewer')
   assert.equal(agents.tasks.length, 0)
-  assert.ok(rcon.sent.some(s => s.includes('Busy with the evil')))
+  assert.ok(rcon.sent.some(s => s.includes('Busy with the duel')))
 })
 
 test('controller: !mob and !animal summon by the agent', async () => {
@@ -284,7 +300,7 @@ test('controller: evil with the director builds the base, spawns, and hands the 
   assert.ok(rcon.has('{ignited:1b}'))
   await c.handle('!reset', 'Viewer')
   assert.ok(rcon.has('director stop'))
-  assert.equal(c.baseBuilt, false)
+  assert.equal(c.baseIntact, true)
 })
 
 test('controller: evil without the director lights the creeper at the wall', async () => {
@@ -456,7 +472,7 @@ test('duel: the real process loads the client and a policy, then exits when the 
   assert.equal(code, 3)
 })
 
-test('agents: "make me a diamond pickaxe" becomes a goal for the dummy, and a stopped task is forgotten', async () => {
+test('agents: "make me a diamond pickaxe" becomes a goal for the player, and a stopped task is forgotten', async () => {
   const { DemoAgents } = require('../run')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-agents-'))
   const s = settings()
@@ -469,8 +485,7 @@ test('agents: "make me a diamond pickaxe" becomes a goal for the dummy, and a st
   assert.equal(seen[0].name, 'get')
   assert.equal(seen[0].args.item, 'diamond_pickaxe')
   assert.equal(seen[0].args.count, 1)
-  assert.equal(seen[0].args.requester, s.dummy)
-  assert.ok(a.friends.has(s.dummy))
+  assert.equal(seen[0].args.requester, s.player)
   assert.equal(await a.ensureKit(), undefined)
 
   const events = []
@@ -531,6 +546,8 @@ const fits = (parser, word) => {
 
 function walks (root, node, words, i) {
   if (i === words.length) return !!node.executable
+  // the data lists execute's run with no children: in the game it goes on at the root
+  if (node.type === 'literal' && node.name === 'run' && !node.children?.length) return walks(root, root, words, i)
   const from = node.redirects?.length ? root.children.find(c => c.name === node.redirects[0]) : node
   if (from !== node && walks(root, from, words, i)) return true
   for (const child of node.children || []) {
@@ -558,7 +575,11 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   await a.c.handle('!help', 'Viewer')
   for (const m of MOBS) await a.c.handle(`!mob ${m}`, 'Viewer')
   for (const x of ANIMALS) await a.c.handle(`!animal ${x}`, 'Viewer')
+  await a.c.handle('!chest', 'Viewer')
   await a.c.taskStarted('diamond_pickaxe')
+  await a.c.handle('!follow', 'Viewer')
+  await a.c.handle('!unfollow', 'Viewer')
+  await a.c.playerHome()
   await a.c.taskEnded('done')
   await a.c.handle('!evil', 'Viewer')
   await a.timers.fire(3000)
@@ -579,6 +600,8 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   for (const line of lines) {
     const words = splitCommand(line)
     if (words[0] === 'director') continue
+    // the data package still lists the older uuid form of this one command
+    if (/^attribute \S+ minecraft:\S+ modifier add demo:countdown_hold -1 add_multiplied_total$/.test(line)) continue
     if (words[0] === 'gamerule') {
       if (words.length < 2 || words.length > 3) bad.push(line)
       continue
@@ -588,8 +611,183 @@ test('every command the demo sends fits the game\'s command tree', async () => {
   }
   assert.deepEqual(bad, [])
   for (const wrong of ['effect give @e minecraft:speed forever', 'item replace entity Viewer hotbar.0 diamond_axe',
-    'fill 1 2 3 4 5 barrier', 'spectate Agent1 Viewer extra', 'forceload add', 'time set', 'data merge entity']) {
+    'fill 1 2 3 4 5 barrier', 'spectate Agent1 Viewer extra', 'execute as Viewer run spectate Agent1 Viewer extra', 'execute as Viewer run', 'forceload add', 'time set', 'data merge entity']) {
     assert.equal(walks(root, root, splitCommand(wrong), 0), false, wrong)
   }
   assert.ok(checked > 60, `only ${checked} lines checked`)
+})
+
+test('scene: the agent starts with a stone axe, a shield and 6 bread', () => {
+  const k = scene.agentKitCommands('Agent1')
+  assert.ok(k.includes('item replace entity Agent1 hotbar.0 with stone_axe'))
+  assert.ok(k.includes('item replace entity Agent1 weapon.offhand with shield'))
+  assert.ok(k.includes('item replace entity Agent1 hotbar.8 with bread 6'))
+  assert.ok(!k.some(c => c.includes('diamond')))
+})
+
+// A small repeatable random source. The first few values of a low seed are all tiny, so they are skipped
+const seeded = start => {
+  let seed = start
+  const next = () => {
+    seed = (seed * 16807) % 2147483647
+    return (seed - 1) / 2147483646
+  }
+  for (let i = 0; i < 5; i++) next()
+  return next
+}
+
+test('scene: pillars come in 1 or 2 mirrored pairs, off the walls and clear of both spawns', () => {
+  const a = scene.arenaOf(STAGE)
+  const spawns = Object.values(scene.duelSpots(STAGE)).map(s => ({ x1: Math.floor(s.x), x2: Math.floor(s.x), z1: Math.floor(s.z), z2: Math.floor(s.z) }))
+  const counts = new Set()
+  for (let seed = 1; seed <= 400; seed++) {
+    const pillars = scene.pillarLayout(STAGE, seeded(seed))
+    counts.add(pillars.length)
+    assert.ok(pillars.length === 2 || pillars.length === 4)
+    for (let i = 0; i < pillars.length; i += 2) assert.deepEqual(scene.mirrorPillar(a, pillars[i]), pillars[i + 1])
+    pillars.forEach((p, i) => {
+      assert.ok(p.x1 >= a.x - a.half + scene.PILLAR_FROM_EDGE && p.x2 <= a.x + a.half - 1 - scene.PILLAR_FROM_EDGE)
+      assert.ok(p.z1 >= a.z - a.half + scene.PILLAR_FROM_EDGE && p.z2 <= a.z + a.half - 1 - scene.PILLAR_FROM_EDGE)
+      for (const s of spawns) assert.ok(scene.blocksBetween(p, s) >= scene.PILLAR_FROM_SPAWN)
+      for (const q of pillars.slice(i + 1)) assert.ok(scene.blocksBetween(p, q) >= scene.PILLAR_GAP)
+    })
+  }
+  assert.deepEqual([...counts].sort(), [2, 4])
+})
+
+test('scene: a pillar is solid to head height, and clearing takes out exactly what was placed', () => {
+  const pillars = [{ x1: 1, x2: 2, z1: 3, z2: 4 }]
+  const y = scene.arenaOf(STAGE).y
+  assert.deepEqual(scene.pillarCommands(STAGE, pillars), [`fill 1 ${y} 3 2 ${y + scene.PILLAR_HEIGHT - 1} 4 ${scene.PILLAR_BLOCK}`])
+  assert.deepEqual(scene.pillarClearCommands(STAGE, pillars), [`fill 1 ${y} 3 2 ${y + scene.PILLAR_HEIGHT - 1} 4 air`])
+  assert.ok(scene.PILLAR_HEIGHT >= 3)
+})
+
+test('controller: a fight places its pillars before the kits and clears them when it ends', async () => {
+  const r = duelRig()
+  await startDuel(r, r.deaths)
+  const pillars = r.c.duelRun.pillars
+  assert.ok(pillars.length === 2 || pillars.length === 4)
+  const placed = scene.pillarCommands(r.c.stage, pillars)
+  for (const c of placed) assert.ok(r.rcon.sent.includes(c))
+  assert.ok(r.rcon.sent.indexOf(placed[placed.length - 1]) < r.rcon.index('gamemode adventure Viewer'))
+  r.deaths.Viewer++
+  await r.c.duelTick(r.c.duelRun)
+  for (const c of scene.pillarClearCommands(r.c.stage, pillars)) assert.ok(r.rcon.sent.includes(c))
+  assert.ok(r.rcon.index(scene.pillarClearCommands(r.c.stage, pillars)[0]) < r.rcon.index('forceload remove'))
+})
+
+test('one v one: the EULA counts only as its own line, and nothing else accepts it', () => {
+  assert.equal(match.eulaAccepted('#comment\neula=true\n'), true)
+  assert.equal(match.eulaAccepted('EULA = TRUE'), true)
+  for (const text of ['', 'eula=false', '#eula=true', 'not eula=true', 'eula=truely']) assert.equal(match.eulaAccepted(text), false)
+})
+
+test('one v one: without an accepted EULA it stops, says what to do, and writes nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'one-v-one-'))
+  const file = path.join(__dirname, '..', 'one_v_one.js')
+  const r = require('child_process').spawnSync(process.execPath, [file], {
+    env: { ...process.env, ONE_V_ONE_DIR: dir, DEMO_PLAYER: 'Viewer' },
+    encoding: 'utf8',
+    timeout: 15000
+  })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /EULA/)
+  assert.match(r.stderr, /eula=true/)
+  assert.deepEqual(fs.readdirSync(dir), [])
+})
+
+test('one v one: its own ports, on this machine only, never the main server ports', () => {
+  const o = match.serverOptions({})
+  assert.equal(o.gamePort, 25570)
+  assert.equal(o.consolePort, 25571)
+  assert.throws(() => match.serverOptions({ ONE_V_ONE_PORT: '25565' }), /main server/)
+  assert.throws(() => match.serverOptions({ ONE_V_ONE_CONSOLE_PORT: '25575' }), /main server/)
+  assert.throws(() => match.serverOptions({ ONE_V_ONE_PORT: '25571' }), /differ/)
+  const text = match.serverProperties({ gamePort: 25570, consolePort: 25571, password: 'x' })
+  assert.match(text, /^server-ip=127\.0\.0\.1$/m)
+  assert.match(text, /^server-port=25570$/m)
+  assert.match(text, /^rcon\.port=25571$/m)
+  assert.match(text, /^white-list=true$/m)
+  assert.match(text, /^generator-settings=\{.*"layers":\[/m)
+  assert.ok(!/eula/i.test(text))
+})
+
+test('one v one: best of 3, drawn fights do not count, and a fight that cannot finish ends the match', async () => {
+  const play = async outcomes => {
+    const said = []
+    const queue = [...outcomes]
+    const out = await match.playMatch({ fight: async () => queue.shift(), tell: async t => said.push(t), wait: async () => {}, fighterName: 'FNN' })
+    return { ...out, said }
+  }
+  let m = await play(['fighter', 'fighter', 'player'])
+  assert.deepEqual([m.result, m.fights, m.score], ['fighter', 2, { player: 0, fighter: 2 }])
+  m = await play(['player', 'fighter', 'player'])
+  assert.deepEqual([m.result, m.fights, m.score], ['player', 3, { player: 2, fighter: 1 }])
+  assert.ok(m.said.includes('Score: you 1, FNN 1.'))
+  m = await play(['time', 'player', 'time', 'player'])
+  assert.deepEqual([m.result, m.fights], ['player', 4])
+  m = await play(['time', 'time', 'time', 'time', 'time'])
+  assert.deepEqual([m.result, m.fights], ['draw', match.MOST_FIGHTS])
+  m = await play(['player', 'crashed'])
+  assert.deepEqual([m.result, m.fights], ['off', 2])
+})
+
+test('one v one: the same fight code, with the player kept in the arena between fights', () => {
+  const c = new match.MatchController({ settings: settings({}), rcon: new FakeRcon(), agents: {}, spawnDuel: () => null, hostile: [] })
+  c.stage = match.STAGE
+  assert.equal(c.duel, DemoController.prototype.duel)
+  assert.equal(c.endDuel, DemoController.prototype.endDuel)
+  const back = c.duelReturnCommands().join(' ')
+  const spot = scene.duelSpots(match.STAGE).player
+  assert.ok(back.includes('gamemode adventure Viewer'))
+  assert.ok(back.includes(`tp Viewer ${spot.x} ${spot.y} ${spot.z}`))
+  assert.ok(!back.includes('creative'))
+  assert.deepEqual(match.onlineNames('There are 2 of a max of 4 players online: Viewer, FNN'), ['Viewer', 'FNN'])
+  assert.equal(match.isOnline('There are 0 of a max of 4 players online: ', 'Viewer'), false)
+})
+
+test('neuron screen: one file, no outside resources, and server text only through textContent', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'neuron_screen.html'), 'utf8')
+  assert.ok(!/(src|href)\s*=\s*["']?https?:/i.test(html))
+  assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/.test(html))
+  assert.ok(html.includes('#1a1a19') && html.includes('#f0efec') && html.includes('#c3c2b7'))
+  assert.ok(html.includes("new EventSource('/stream')") && html.includes("fetch('/meta'"))
+  assert.ok(html.includes('Neuron names are unavailable'))
+})
+
+test('show: the count puts both players back on their spots, without turning them', async () => {
+  const sent = []
+  const pins = [{ name: 'Viewer', x: 1.5, y: 100, z: 2.5 }, { name: 'FNN', x: 13.5, y: 100, z: 2.5 }]
+  const done = await show.countdown({ send: async c => sent.push(c), sleep: async () => {}, viewer: 'Viewer', names: ['Viewer', 'FNN'], pins })
+  assert.equal(done, true)
+  for (const name of ['Viewer', 'FNN']) {
+    const moves = sent.filter(c => c.startsWith(`tp ${name} `))
+    assert.equal(moves.length, 30)
+    assert.ok(moves.every(c => c.split(' ').length === 5))
+  }
+  const lastPin = sent.map(c => c.startsWith('tp ')).lastIndexOf(true)
+  assert.ok(sent.slice(lastPin).some(c => c.includes('modifier remove')))
+})
+
+test('controller: the screen gets the real health of the opponent, and an unknown score is not zero', async () => {
+  assert.equal(scene.parseHealth('Viewer has 13 [HP]'), 13)
+  assert.equal(scene.parseHealth('Viewer has 0 [HP]'), 0)
+  assert.equal(scene.parseHealth("Can't get value of demo_health for Viewer, none is set"), null)
+  const r = duelRig()
+  const seen = []
+  r.child.hp = v => seen.push(v)
+  await startDuel(r, r.deaths)
+  await r.c.duelTick(r.c.duelRun)
+  assert.deepEqual(seen, [2])
+})
+
+test('show: a player already online gets a health score, without being hurt', async () => {
+  const sent = []
+  await show.seedHealth({ send: async c => sent.push(c), sleep: async () => { sent.push('wait') }, name: 'Viewer' })
+  assert.deepEqual(sent, ['effect give Viewer minecraft:absorption 1 0 true', 'wait', 'effect clear Viewer minecraft:absorption'])
+  const r = duelRig()
+  await startDuel(r, r.deaths)
+  assert.ok(r.rcon.index('minecraft:absorption 1 0') < r.rcon.index('bossbar add'))
+  assert.ok(!r.rcon.has('damage Viewer'))
 })

@@ -11,17 +11,28 @@ from .stance import StanceRules
 from .train import AXE_ONLY, CURRICULUM, Stage
 
 AXE_CROSSBOW = (C.AXE, C.CROSSBOW)
+AXE_SWORD_CROSSBOW = (C.AXE, C.SWORD, C.CROSSBOW)
 FOUNDATION_REWARD = {"weak_swing": 0.002, "exact_miss": True}
 COMBO_REWARD = {**FOUNDATION_REWARD, "followup": 1.5, "followup_unfaded": True, "crit": 0.15}
+SPACED_REWARD = {
+    **COMBO_REWARD,
+    "crit": 0.4,
+    "clean_shot": 0.3,
+    "blocked_shot": 0.15,
+    "load_range": 7.0,
+    "timeout_cost": 0.5,
+}
+SPACED_MUTABLE = ("crit", "clean_shot", "blocked_shot", "load_range", "timeout_cost", "shield_break", "followup")
 
 
 @dataclass(frozen=True)
 class Plan:
-    """stages, reward overrides, scripted rules, charge input gate and adaptive final mix.
+    """stages, reward overrides, scripted rules, charge input gate, adaptive final mix and evolvable weights.
 
     fight_setup: the setup this plan always plays in, when it has one.
     arena_mix: the fixed opponent mix of an evolved child, in place of the default one.
     named_opponents: opponents added to the ranking test of an evolution.
+    mutable: the reward weights an evolution may change, or None for its full list.
     """
 
     stages: tuple[Stage, ...]
@@ -32,6 +43,7 @@ class Plan:
     fight_setup: str | None = None
     arena_mix: dict[str, float] | None = None
     named_opponents: tuple[str, ...] = ()
+    mutable: tuple[str, ...] | None = None
 
 
 FOUNDATION_STAGES = tuple(
@@ -101,6 +113,10 @@ WALLS_MIX = {
 if "custom_pvp" not in SCRIPTED:  # its share goes to the nearest bot, so synth stays at half
     WALLS_MIX["mineflayer_pvp"] += WALLS_MIX.pop("custom_pvp")
 WALLS_STAGES = (*COMBO_STAGES[:-1], replace(COMBO_STAGES[-1], mix=dict(WALLS_MIX)))
+SPACED_STAGES = tuple(
+    replace(stage, weapons=AXE_SWORD_CROSSBOW if stage.weapons == AXE_CROSSBOW else stage.weapons)
+    for stage in COMBO_STAGES
+)
 PLANS = {
     "melee": Plan(tuple(CURRICULUM)),
     "foundations": Plan(FOUNDATION_STAGES, FOUNDATION_REWARD, StanceRules(), CHARGE_GATE),
@@ -114,6 +130,14 @@ PLANS = {
         "diamond_20_walls",
         WALLS_MIX,
         OPEN_SOURCE_BOTS,
+    ),
+    "spaced_axe": Plan(
+        SPACED_STAGES,
+        SPACED_REWARD,
+        StanceRules(followup=True, sword_window=True),
+        CHARGE_GATE,
+        True,
+        mutable=SPACED_MUTABLE,
     ),
 }
 ARENA_LEAGUE_WEIGHT = 4.0

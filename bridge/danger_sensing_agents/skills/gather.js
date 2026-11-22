@@ -11,7 +11,7 @@ const { digHazard } = require('../hazards')
 const { sleep } = require('./human')
 const { pickTool, stepInto, walkOntoDrops } = require('./mine')
 const { pickUpDrops } = require('./pickup')
-const { canFlow, preAim, seesBlock, walkCells } = require('./motion')
+const { canFlow, findKnownOre, preAim, seesBlock, walkCells } = require('./motion')
 const { WOODS } = require('./craft')
 
 const SEE = 24
@@ -59,11 +59,13 @@ function isNaturalLeaves (block) {
 // Blocks of these names it can see (or that touch it), nearest first, minus avoid(pos)
 function visible (bot, names, avoid, { leaves = false, logs = false } = {}) {
   const ids = names.map(n => bot.registry.blocksByName[n]?.id).filter(id => id !== undefined)
+  // ore is never known just for being close: it has to be in view or remembered
+  if (names.some(n => /_ore$/.test(n))) return findKnownOre(bot, ids, SEE).filter(p => !avoid(p)).slice(0, 12)
   const found = bot.findBlocks({ matching: ids, maxDistance: SEE, count: 120 })
   const out = []
   let checks = 0
   for (const pos of found) {
-    if (avoid(pos)) continue
+    if (avoid(pos) || bot.agentsKeepBlock?.(pos)) continue
     const b = bot.blockAt(pos)
     if (!b) continue
     if (leaves && !isNaturalLeaves(b)) continue
@@ -150,6 +152,9 @@ async function staircase (bot, item, want, token, log) {
     }
     feet = next
     walked.push(next)
+    // a staircase dug for stone is a head start for the next ore trip
+    if (step === 0) bot._tunnelMap?.add(bot, 'stair', start, { x: dx, z: dz })
+    bot._tunnelMap?.add(bot, 'stair', next, { x: dx, z: dz })
   }
   if (lastCut && enough() && !token?.cancelled) {
     await collectDrops(bot, lastCut.offset(0.5, 0.5, 0.5), token)

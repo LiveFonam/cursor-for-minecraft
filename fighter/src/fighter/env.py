@@ -43,6 +43,10 @@ class RewardConfig:
     best_range: float = 2.7
     exact_miss: bool = False
     followup_unfaded: bool = False
+    load_range: float = 0.0
+    clean_shot: float = 0.0
+    blocked_shot: float = 0.0
+    timeout_cost: float = 0.0
 
 
 class ArenaVecEnv(VecEnv):
@@ -90,7 +94,10 @@ class ArenaVecEnv(VecEnv):
         want_yaw, want_pitch = view_angles(chest - eye)
         yaw_err = np.radians(wrap_degrees(want_yaw - sim.yaw[:, 0]))
         pitch_err = np.radians(want_pitch - sim.pitch[:, 0])
-        spacing = -np.abs(distance - cfg.best_range) / (2.0 * sim.cfg.arena_half)
+        target = cfg.best_range
+        if cfg.load_range > 0.0:
+            target = np.where(sim.weapon[:, 0] == C.CROSSBOW, cfg.load_range, cfg.best_range)
+        spacing = -np.abs(distance - target) / (2.0 * sim.cfg.arena_half)
         aim = np.cos(yaw_err) * np.cos(pitch_err)
         return cfg.shaping * (cfg.spacing * spacing + cfg.aim * 5.0 * aim)
 
@@ -109,6 +116,8 @@ class ArenaVecEnv(VecEnv):
             + cfg.sprint_hit * ev["sprint_hits"][:, 0]
             + cfg.shield_block * (ev["melee_blocked"][:, 1] + ev["arrows_blocked"][:, 0])
             + cfg.shield_break * ev["shield_breaks"][:, 0]
+            + cfg.clean_shot * ev["arrow_hits"][:, 0]
+            - cfg.blocked_shot * ev["arrows_blocked"][:, 1]
         )
         followup = cfg.followup * ev["followup_damage"][:, 0] / C.MAX_HEALTH
         if cfg.followup_unfaded:
@@ -139,6 +148,8 @@ class ArenaVecEnv(VecEnv):
             "sprint_hit": scale * cfg.sprint_hit * ev["sprint_hits"][:, 0],
             "shield_block": scale * cfg.shield_block * (ev["melee_blocked"][:, 1] + ev["arrows_blocked"][:, 0]),
             "shield_break": scale * cfg.shield_break * ev["shield_breaks"][:, 0],
+            "clean_shot": scale * cfg.clean_shot * ev["arrow_hits"][:, 0],
+            "blocked_shot": -scale * cfg.blocked_shot * ev["arrows_blocked"][:, 1],
             "followup": followup if cfg.followup_unfaded else scale * followup,
             "weak_swing": -scale * cfg.weak_swing * fined,
             "strafe": scale * cfg.strafe * (near & strafing),
@@ -165,8 +176,9 @@ class ArenaVecEnv(VecEnv):
         outcome[ko & (hp[:, 0] <= 0.0) & (hp[:, 1] > 0.0)] = -1
         bonus = cfg.win * outcome.astype(float)
         margin = (hp[:, 0] - hp[:, 1]) / C.MAX_HEALTH
-        self.outcome_terms = {"win": bonus, "timeout_margin": timeout * cfg.timeout_margin * margin}
-        bonus = bonus + timeout * cfg.timeout_margin * margin
+        on_timeout = timeout * (cfg.timeout_margin * margin - cfg.timeout_cost)
+        self.outcome_terms = {"win": bonus, "timeout_margin": on_timeout}
+        bonus = bonus + on_timeout
         return bonus, outcome
 
     def _goal(self, ev: dict[str, np.ndarray], outcome: np.ndarray) -> np.ndarray:

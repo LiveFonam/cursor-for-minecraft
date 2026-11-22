@@ -85,7 +85,7 @@ ELO_ROUNDS = 200
 MUTABLE = ("crit", "sprint_hit", "weak_swing", "shield_block", "shield_break", "followup", "aim", "spacing", "strafe", "best_range")
 CHANGE_LOW = 0.5
 CHANGE_HIGH = 2.0
-ABSOLUTE_LIMITS = {"best_range": (2.2, 3.0)}
+ABSOLUTE_LIMITS = {"best_range": (2.2, 3.0), "load_range": (5.0, 10.0)}
 POLL_SECONDS = 2.0
 STOP_WAIT_SECONDS = 600.0
 MEMORY_WAIT_SECONDS = 1800.0
@@ -160,7 +160,7 @@ class EvolveConfig:
     retest_games: int = 256
     retest_top: int = 2
     fight_setup: str = "standard"
-    plan: str = ""
+    plan: str | None = None
 
 
 @dataclass
@@ -463,8 +463,9 @@ def mutate_reward(
     reward = dict(current)
     changes: dict[str, list[float]] = {}
     if keys is None:
-        picks = rng.choice(len(MUTABLE), size=min(count, len(MUTABLE)), replace=False)
-        keys = tuple(MUTABLE[pick] for pick in sorted(int(item) for item in picks))
+        pool = PLANS[plan].mutable or MUTABLE
+        picks = rng.choice(len(pool), size=min(count, len(pool)), replace=False)
+        keys = tuple(pool[pick] for pick in sorted(int(item) for item in picks))
     for key in keys:
         old = float(reward.get(key, base[key]))
         low, high = ABSOLUTE_LIMITS.get(key, (CHANGE_LOW * base[key], CHANGE_HIGH * base[key]))
@@ -764,7 +765,9 @@ class Evolution:
         policy.save(build / FIGHTER / "policy.npz")
         torch.save({"model": starting_weights(source)}, build / FIGHTER / "final.pt")
         write_json(build / FIGHTER / "policy.json", {"steps": meta.get("steps"), "experts": experts, "campaign": campaign})
-        plan = self.cfg.plan if self.cfg.plan and status == "alive" else config.get("plan", "melee")
+        plan = config.get("plan", "melee")
+        if status == "alive" and self.cfg.plan:
+            plan = self.cfg.plan
         settings = CampaignConfig(plan=plan, id=campaign, reward=config.get("reward"), fight_setup=self.cfg.fight_setup)
         write_json(build / "campaign.json", asdict(settings))
         record = {
@@ -1104,7 +1107,8 @@ class Evolution:
         ranking = [name for name in self.state["ranking"] if self.state["members"][name]["status"] == "alive"]
         parents = [name for name in ranking if name in chosen][: cfg.n_parents]
         rng = np.random.default_rng([cfg.seed, generation])
-        order = [MUTABLE[int(item)] for item in rng.permutation(len(MUTABLE))] if cfg.changes == 1 else []
+        weights = (PLANS[cfg.plan].mutable if cfg.plan else None) or MUTABLE
+        order = [weights[int(item)] for item in rng.permutation(len(weights))] if cfg.changes == 1 else []
         shares = [cfg.children // len(parents) + int(line < cfg.children % len(parents)) for line in range(len(parents))]
         assigned = [(parent, slot) for parent, share in zip(parents, shares) for slot in range(share)]
         children = []

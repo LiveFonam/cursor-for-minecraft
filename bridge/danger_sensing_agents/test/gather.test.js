@@ -95,6 +95,17 @@ test('no tool: nothing is dug, and it says what it needs', async () => {
 
 // ---------- the skills on the fake world ----------
 
+// Real line of sight on the fake world: the ray stops at the first solid block
+function realSight (bot, world) {
+  bot.world.raycast = (from, dir, range) => {
+    for (let t = 0; t <= range; t += 0.05) {
+      const p = from.plus(dir.scaled(t)).floored()
+      if (world.get(p).boundingBox === 'block') return { position: p, face: 0 }
+    }
+    return null
+  }
+}
+
 // A natural oak (logs up into leaves the game placed) next to the bot, and a pillar of logs the owner placed
 function woods () {
   const { bot, world } = makeBot({ groundY: 63 })
@@ -132,7 +143,7 @@ test('iron: the miner finds it, keeps it in the bag and comes back', async () =>
   const { bot, world } = makeBot({ groundY: 63, pos: at.offset(0.5, 0, 0.5) })
   world.set(at, 'air')
   world.set(at.offset(0, 1, 0), 'air')
-  bot.world.raycast = () => null
+  realSight(bot, world)
   bot.give('stone_pickaxe', 1)
   world.set(new Vec3(3, 17, -2), 'iron_ore')
   const token = { cancelled: false }
@@ -231,7 +242,7 @@ function brokenPickaxeScene () {
   const { bot, world } = makeBot({ groundY: 63, pos: at.offset(0.5, 0, 0.5) })
   for (const c of [at, at.offset(0, 1, 0), at.offset(1, 0, 0), at.offset(1, 1, 0)]) world.set(c, 'air')
   world.set(at.offset(-1, 0, 0), 'crafting_table')
-  bot.world.raycast = () => null
+  realSight(bot, world)
   bot.give('wooden_pickaxe', 1)
   bot.give('cobblestone', 3)
   bot.give('stick', 2)

@@ -11,6 +11,7 @@
 // said once per kind and area. The job keeps its progress, so a fight can pause it and it carries on after.
 
 const { Vec3 } = require('vec3')
+const { findKnownOre } = require('./motion')
 const { goals } = require('mineflayer-pathfinder')
 const { goTo } = require('./move')
 
@@ -246,7 +247,7 @@ function scan (bot, job, hooks) {
   const eye = eyeOf(bot)
 
   // exposed ore, grouped by kind
-  const ores = visibleBlocks(bot, ORE_NAMES, LOS_CAP.ore)
+  const ores = findKnownOre(bot, idsOf(bot, ORE_NAMES), SEE, LOS_CAP.ore).map(p => bot.blockAt(p)).filter(Boolean)
   for (const kind of ORE_KINDS) {
     const mine = ores.filter(b => oreKind(b.name) === kind)
     for (const g of groups(mine, 4)) {

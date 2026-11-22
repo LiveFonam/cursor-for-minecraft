@@ -49,10 +49,12 @@ SPAWN_CORNER_INSET = 1e-4
 # Named fight conditions for training and testing. "standard" is the plain SimConfig. "diamond_20" is one full set of
 # unenchanted diamond armor, a diamond axe and sword, a shield, a crossbow, a bow and 6 arrows, in a 20 block wide arena.
 # "diamond_20_walls" is the same fight with fresh mirrored solid pillars every round.
+# "diamond_20_far" is the same fight started 15 to 17 blocks apart, with time to load the crossbow.
 FIGHT_SETUPS: dict[str, dict] = {
     "standard": {},
     "diamond_20": {"armor": "diamond", "arena_half": 10.0},
     "diamond_20_walls": {"armor": "diamond", "arena_half": 10.0, "pillars": True},
+    "diamond_20_far": {"armor": "diamond", "arena_half": 10.0, "spawn_min": 15.0, "spawn_max": 17.0},
 }
 
 

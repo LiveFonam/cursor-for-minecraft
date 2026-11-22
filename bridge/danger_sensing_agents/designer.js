@@ -5,7 +5,7 @@
 //
 // Uses the same API key and client setup as translator.js. The key is never printed or logged.
 
-const { loadCredentials, makeClient, apiErrorText } = require('./translator')
+const { loadCredentials, makeClient, apiErrorText, noteUsage } = require('./translator')
 const bp = require('./skills/blueprint')
 const registry = require('prismarine-registry')('1.21.11')
 
@@ -65,6 +65,7 @@ class Designer {
       } catch (err) {
         return { error: apiErrorText(err, this.creds) }
       }
+      noteUsage(this.log, reply.usage, `designer ${this.model}`)
       if (reply.stop_reason === 'refusal') return { error: 'the model declined' }
       const text = (reply.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
       const r = this.check(text, name)

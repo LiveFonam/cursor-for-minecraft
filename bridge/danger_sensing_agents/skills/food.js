@@ -29,7 +29,8 @@ const WAY_LEASH = 14       // an animal that runs this far from where the detour
 const WAY_MS = 8000
 // It stops at 6 full bars, counting what it can cook at its cooked value: about 15 steaks. Well above the 24 point
 // reserve on purpose, so a bag of bread is no reason to walk past a close animal
-const WAY_RESERVE = 120
+const HUNT_ENOUGH = 36          // food points: over this it stops going after animals, whatever the job asks for
+const WAY_RESERVE = HUNT_ENOUGH
 const WAY_PATH_MS = 40
 const WAY_CHECK_MS = 1000  // how long the answer of one path search holds for one animal
 const SUPPLY_MS = 1000     // cooking options read the world, so the food count is worked out at most this often
@@ -256,10 +257,10 @@ function noteSeen (bot) {
 }
 
 // The animal worth a small detour right now, or null: grown, in sight, within WAY_RADIUS on about its own level, not in
-// water, with a short walk to it, and only while the bag is under WAY_RESERVE
+// water, with a short walk to it, and only while the bag holds no more than WAY_RESERVE
 function animalOnTheWay (bot, work = null) {
   noteSeen(bot)
-  if (foodSupply(bot, work).total >= WAY_RESERVE) return null
+  if (foodSupply(bot, work).total > WAY_RESERVE) return null
   const me = bot.entity.position
   const checks = bot._agentsWayChecks || (bot._agentsWayChecks = new Map())
   const now = Date.now()
@@ -412,4 +413,4 @@ async function restockFood (bot, token, { want, farms = () => [], log = () => {}
   return points()
 }
 
-module.exports = { foods, readyFoods, foodInfo, foodPointsCarried, foodSupply, supplyText, animalOnTheWay, huntOnTheWay, huntCounts, huntText, WAY_RADIUS, WAY_RESERVE, needsFood, eat, eatItem, feed, foodDecision, gatherFood, huntOne, animalsNear, gaveUpOn, canSee, restockFood, isBaby, HUNGRY, LOW_HEALTH, ENOUGH_FOOD, ANIMALS, GIVE_UP_MS }
+module.exports = { HUNT_ENOUGH, foods, readyFoods, foodInfo, foodPointsCarried, foodSupply, supplyText, animalOnTheWay, huntOnTheWay, huntCounts, huntText, WAY_RADIUS, WAY_RESERVE, needsFood, eat, eatItem, feed, foodDecision, gatherFood, huntOne, animalsNear, gaveUpOn, canSee, restockFood, isBaby, HUNGRY, LOW_HEALTH, ENOUGH_FOOD, ANIMALS, GIVE_UP_MS }

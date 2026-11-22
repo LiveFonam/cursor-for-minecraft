@@ -45,6 +45,25 @@ function apiErrorText (err, credentials) {
   return credentials?.key ? text.split(credentials.key).join('[key]') : text
 }
 
+// Every model call in this process, so the spending shows in the log. Only counts, never the key or the words
+const usageTotals = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+function noteUsage (log, usage, label = 'model') {
+  const input = usage?.input_tokens || 0
+  const output = usage?.output_tokens || 0
+  const cacheRead = usage?.cache_read_input_tokens || 0
+  const cacheWrite = usage?.cache_creation_input_tokens || 0
+  const t = usageTotals
+  t.calls++
+  t.input += input
+  t.output += output
+  t.cacheRead += cacheRead
+  t.cacheWrite += cacheWrite
+  const cache = (read, write) => read || write ? `, cache read ${read}, cache write ${write}` : ''
+  log(`${label} tokens: in ${input}, out ${output}${cache(cacheRead, cacheWrite)} | total ${t.calls} calls, in ${t.input}, out ${t.output}${cache(t.cacheRead, t.cacheWrite)}`)
+  return { ...t }
+}
+
 function systemPrompt (botNames, blueprints = []) {
   return [
     'You read one chat message from a Minecraft player to their helper bots and say what the player wants. You never plan steps or work out materials, a script does that.',
@@ -67,7 +86,10 @@ function systemPrompt (botNames, blueprints = []) {
     ] : []),
     'Impossible means an action no command covers: going to the Nether or the End, trading, enchanting, brewing, fishing, sleeping.',
     'Vague means no clear item or action, for example "help me", "do something", "get me stuff".',
+    'A question about the bots themselves is a command, not vague: health, food, where they are or how they are doing is !status, what they are working on is !doing, the steps left is !plan, dangers nearby is !danger.',
     'Examples:',
+    '"how much food do you have" {"command": "!status"}',
+    '"what are you doing" {"command": "!doing"}',
     '"bring me 5 logs" {"goal": {"item": "wood", "count": 5}}',
     '"I need an iron pick" {"goal": {"item": "iron_pickaxe", "count": 1}}',
     '"stay close to me" {"command": "!follow"}',
@@ -106,6 +128,7 @@ class Translator {
     } catch (err) {
       return { lines: [], parsed: [], error: apiErrorText(err, this.creds) }
     }
+    noteUsage(this.log, reply.usage, `translator ${this.model}`)
     if (reply.stop_reason === 'refusal') return { lines: [], parsed: [], dropped: [], vague: null, impossible: 'I was not allowed to do that' }
     const out = (reply.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
     return this.check(out, targets)
@@ -160,4 +183,4 @@ class Translator {
   }
 }
 
-module.exports = { Translator, loadCredentials, makeClient, apiErrorText, systemPrompt }
+module.exports = { Translator, loadCredentials, makeClient, apiErrorText, noteUsage, systemPrompt }

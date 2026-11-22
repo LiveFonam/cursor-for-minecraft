@@ -4,7 +4,7 @@
 // another server folder.
 //
 //   node director/scripts/build.js           build and put the jar in server-agents/plugins
-//   node director/scripts/build.js --test    also run the shelter tests (no server needed)
+//   node director/scripts/build.js --test    also run the shelter and planner tests (no server needed)
 
 const fs = require('fs')
 const path = require('path')
@@ -63,5 +63,5 @@ if (process.argv.includes('--test')) {
   const tests = path.join(OUT, 'test-classes')
   fs.mkdirSync(tests, { recursive: true })
   run(jdkTool('javac'), ['--release', '21', '-Xlint:-options', '-encoding', 'UTF-8', '-cp', classes + SEP + cp, '-d', tests, ...files(path.join(SRC, 'test'), '.java')])
-  run(jdkTool('java'), ['-cp', [tests, classes, cp].join(SEP), 'cursor.director.ShelterTest'])
+  for (const t of ['ShelterTest', 'PlannerTest']) run(jdkTool('java'), ['-cp', [tests, classes, cp].join(SEP), 'cursor.director.' + t])
 }

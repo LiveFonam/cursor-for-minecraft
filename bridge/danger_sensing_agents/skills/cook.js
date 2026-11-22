@@ -321,10 +321,10 @@ async function craftFurnace (bot, work, token, log) {
 
 // Places the furnace from its bag on free ground beside it
 async function placeFurnace (bot, work, token, log) {
-  const { freeSpot } = require('./craft')
+  const { freeSpot, digRoom } = require('./craft')
   const item = bot.inventory.items().find(i => i.name === 'furnace')
   if (!item) throw new Error('I have no furnace')
-  const spot = freeSpot(bot, () => false)
+  const spot = freeSpot(bot, () => false) || await digRoom(bot, () => false, log)
   if (!spot) throw new Error('no free spot for a furnace')
   await near(bot, spot, token)
   await bot.equip(item, 'hand')
