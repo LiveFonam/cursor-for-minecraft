@@ -21,6 +21,20 @@ const USERNAME = /^[A-Za-z0-9_]{3,16}$/
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 const SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..')
 
+// Every limit of the always-on evil mode
+const EVIL_LIMITS = Object.freeze({
+  maxAlive: 8,          // evil mobs alive at once, never more
+  startZombies: 3,      // zombies in the first waves, one more every second wave
+  maxZombies: 6,        // zombies in the biggest wave
+  waveGapMs: 15000,     // the pause after a wave is cleared
+  waveMaxMs: 75000,     // a wave still alive after this is topped up to the cap
+  graceMs: 8000,        // after a respawn, before the hunt goes on
+  pollMs: 2500,         // how often the hunt looks at the world
+  modelPerMinute: 4,    // model calls in any one minute
+  modelPerHour: 40,     // model calls in any one hour
+  modelPerRun: 150      // model calls until the demo is restarted
+})
+
 function checkName (label, name) {
   if (!USERNAME.test(String(name))) throw new Error(`${label} must be a Minecraft name, got "${name}"`)
   return name
@@ -82,4 +96,4 @@ function missingFighterFiles (settings, exists = require('fs').existsSync) {
   return files.filter(f => !exists(f))
 }
 
-module.exports = { loadSettings, parseStage, missingFighterFiles, hasNetwork }
+module.exports = { EVIL_LIMITS, loadSettings, parseStage, missingFighterFiles, hasNetwork }

@@ -260,10 +260,10 @@ test('controller: the cues send a mob and an animal only during a task', async (
 
 test('controller: a plain task is refused while something else runs', async () => {
   const { c, agents, rcon } = rig()
-  await c.handle('!evil', 'Viewer')
+  c.state = 'duel'
   await c.handle('make me a diamond pickaxe', 'Viewer')
   assert.equal(agents.tasks.length, 0)
-  assert.ok(rcon.sent.some(s => s.includes('Busy with the evil')))
+  assert.ok(rcon.sent.some(s => s.includes('Busy with the duel')))
 })
 
 test('controller: !mob and !animal summon by the agent', async () => {
@@ -600,4 +600,12 @@ test('every command the demo sends fits the game\'s command tree', async () => {
     assert.equal(walks(root, root, splitCommand(wrong), 0), false, wrong)
   }
   assert.ok(checked > 60, `only ${checked} lines checked`)
+})
+
+test('scene: the agent starts with a stone axe, a shield and 6 bread', () => {
+  const k = scene.agentKitCommands('Agent1')
+  assert.ok(k.includes('item replace entity Agent1 hotbar.0 with stone_axe'))
+  assert.ok(k.includes('item replace entity Agent1 weapon.offhand with shield'))
+  assert.ok(k.includes('item replace entity Agent1 hotbar.8 with bread 6'))
+  assert.ok(!k.some(c => c.includes('diamond')))
 })

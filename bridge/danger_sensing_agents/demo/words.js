@@ -7,9 +7,10 @@ const HELP_LINES = Object.freeze([
   'Demo commands:',
   '!reset (or !start): back to your base with an empty chest, agent with shield, axe and 6 bread',
   '!chest: the same, with the chest stocked for a diamond pickaxe',
-  '!follow: during a task, watch from the agent. !unfollow to fly free',
+  '!pov: during a task, see through the agent\'s eyes. !spec to go back to flying free',
+  '!haste [on|off]: give the agent Haste for faster mining, or take it away',
   '!1v1: fight the trained axe fighter in the arena',
-  `!evil: a creeper breaches your base and 3 zombies invade`,
+  `!evil: the evil god hunts you in waves until a task, !reset or !stop`,
   `!mob [${MOBS.join('|')}]: send a mob at the agent`,
   `!animal [${ANIMALS.join('|')}]: put an animal by the agent`,
   '!stop: stop everything and go back to the base',
@@ -33,8 +34,14 @@ function parseDemoCommand (text) {
     case 'start':
     case 'reset': return noArgs('reset')
     case 'chest': return noArgs('chest')
+    case 'pov':
     case 'follow': return noArgs('follow')
+    case 'spec':
     case 'unfollow': return noArgs('unfollow')
+    case 'haste': {
+      if (extra !== undefined || (arg !== undefined && arg !== 'on' && arg !== 'off')) return { error: '!haste takes on or off' }
+      return arg === undefined ? { name: 'haste' } : { name: 'haste', on: arg === 'on' }
+    }
     case '1v1': return noArgs('duel')
     case 'evil': return noArgs('evil')
     case 'stop': return noArgs('stop')
@@ -49,4 +56,28 @@ function parseDemoCommand (text) {
   }
 }
 
-module.exports = { parseDemoCommand, HELP_LINES, MOBS, ANIMALS }
+// Plain words about the camera, like "lemme see your pov" or "back to spectator". A line that names something to make
+// or fetch is a task, so "get me iron while I watch your view" still goes to the agent
+const TASK_THING = /\b(pickaxe|axe|sword|shovel|iron|diamonds?|wood|logs?|coal|stone|cobblestone|torch(es)?|food|furnace|chest|house|hut|farm)\b/
+const TO_SPECTATOR = /\b(spectator|spectate|spec|free ?cam|fly(ing)? (free|around)|my (own )?(pov|view|camera|cam)|stop (following|watching)|unfollow|(leave|exit|get out of) (your|ur|the agent'?s?) (pov|view|eyes|camera|cam))\b/
+const TO_AGENT = /\b((your|ur|the agent'?s?|agent'?s?|bot'?s?) (pov|view|perspective|eyes|camera|cam)|pov|point of view|first person|through (your|ur) eyes|what (do |are )?(you|u) (see|seeing|are seeing|r seeing))\b/
+
+function parseCameraWords (text) {
+  const line = String(text ?? '').trim().toLowerCase()
+  if (!line || line.startsWith('!') || TASK_THING.test(line)) return null
+  if (TO_SPECTATOR.test(line)) return { name: 'unfollow' }
+  if (TO_AGENT.test(line)) return { name: 'follow' }
+  return null
+}
+
+// Plain words about Haste, like "use haste" or "turn off haste". A line that also asks for something stays a task too
+const FASTER = /\b(mine|dig|mining|digging) (a lot |way |much )?faster\b/
+const HASTE_OFF = /\b(off|stop|no|without|remove|disable|lose|drop|don'?t|quit|end)\b/
+
+function parseHasteWords (text) {
+  const line = String(text ?? '').trim().toLowerCase()
+  if (!line || line.startsWith('!') || !(/\bhaste\b/.test(line) || FASTER.test(line))) return null
+  return { name: 'haste', on: !HASTE_OFF.test(line), alsoTask: TASK_THING.test(line) }
+}
+
+module.exports = { parseDemoCommand, parseCameraWords, parseHasteWords, HELP_LINES, MOBS, ANIMALS }

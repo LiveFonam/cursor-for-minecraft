@@ -145,7 +145,7 @@ test('the model sees numbers and menu words, never a player name', async () => {
   assert.ok(!body.includes('Viewer') && !body.includes('Agent1'))
   const s = JSON.parse(body)
   assert.deepEqual([s.player.dx, s.player.dz, s.player.health, s.player.inside], [0, 2, 14, true])
-  assert.equal(s.base.door, 'none')
+  assert.equal(s.base.door, 'south')
   assert.equal(s.mobs.zombies_waiting, 3)
 })
 
@@ -194,7 +194,7 @@ test('no key: no call, the scripted plan, and it says so', async () => {
   await timers.fire(3000)
   await settle()
   assert.equal(summons(sent, 'zombie').length, 3)
-  assert.equal(timers.intervals.size, 0)
+  assert.equal(c.raid.watcher, null, 'no model, so nothing watches for a moment to ask it')
 })
 
 test('the key never reaches a log, even inside an error message', async () => {
@@ -324,7 +324,7 @@ const fits = (parser, word) => {
   if (parser === 'brigadier:integer') return /^-?\d+$/.test(word)
   if (parser === 'brigadier:float' || parser === 'brigadier:double') return NUMBER.test(word)
   if (parser === 'brigadier:bool') return word === 'true' || word === 'false'
-  if (WIDTH[parser]) return NUMBER.test(word)
+  if (WIDTH[parser]) return word === '~' || NUMBER.test(word)
   return true
 }
 
@@ -361,7 +361,7 @@ function walks (root, node, words, i) {
   if (from !== node && walks(root, from, words, i)) return true
   for (const child of node.children || []) {
     if (child.type === 'literal') {
-      if (child.name === words[i] && walks(root, child, words, i + 1)) return true
+      if (child.name === words[i] && walks(root, child.name === 'run' ? root : child, words, i + 1)) return true
     } else {
       const n = WIDTH[child.parser?.parser] || 1
       if (i + n > words.length) continue
@@ -381,6 +381,11 @@ test('every command the menu can send fits the game\'s command tree', () => {
         const p = { wall, approach, zombies }
         for (const l of [...plan.creeperCommands(STAGE, p), ...plan.zombieCommands(STAGE, p), ...plan.igniteCommands(STAGE, p)]) lines.add(l)
         for (const m of plan.MOVES) for (const l of plan.moveCommands(STAGE, p, m)) lines.add(l)
+        for (const away of [false, true]) {
+          const w = plan.waveCommands(STAGE, p, { player: { x: 100, y: 64, z: 100 }, away, creeper: 1, zombies: 6 })
+          for (const l of [...w.creeper, ...w.zombies]) lines.add(l)
+        }
+        lines.add(plan.regatherCommand('Viewer', { x: 100, y: 64, z: 100 }, wall))
       }
     }
   }

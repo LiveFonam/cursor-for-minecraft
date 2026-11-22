@@ -20,11 +20,18 @@ class EvilRaid {
     this.busy = false
     this.watcher = null
     this.ended = false
+    this.stopped = new Promise(resolve => { this.markStopped = resolve })
   }
 
   end () {
     this.ended = true
     this.stopWatch()
+    this.markStopped()
+  }
+
+  // A model call still pending never holds up a turn-off, and its answer is dropped
+  whileOn (pending) {
+    return Promise.race([pending, this.stopped])
   }
 
   // Stops partway the moment the invasion is over, so a !reset never has mobs land after it
@@ -48,7 +55,7 @@ class EvilRaid {
       this.host.log('evil-brain opening: scripted (situation not readable)')
       return
     }
-    const plan = await this.mind.open(situation)
+    const plan = await this.whileOn(this.mind.open(situation))
     if (this.ended) return
     this.plan = plan
     await this.say(plan.line)
@@ -73,7 +80,7 @@ class EvilRaid {
     this.blown = true
     this.history.push(`the creeper went off at the ${this.plan.wall} wall`)
     if (this.mind?.canAsk) {
-      const move = await this.mind.adapt('wall_blew', await this.situation('wall_blew'))
+      const move = await this.whileOn(this.mind.adapt('wall_blew', await this.situation('wall_blew')))
       if (this.ended) return
       if (move) {
         this.plan = plans.withMove(this.plan, move.action)
@@ -86,6 +93,21 @@ class EvilRaid {
     }
     await this.summonZombies()
     this.watch()
+  }
+
+  // One model call for a later wave of the hunt. Anything but a good answer keeps the scripted side
+  async planWave (scripted, hunt) {
+    this.plan = scripted
+    this.blown = true
+    this.zombiesOut = true
+    this.zombies = hunt.mobs_alive
+    if (!this.mind) return
+    const situation = this.mind.canAsk ? await this.situation('wave', hunt) : null
+    if (this.ended) return
+    const plan = await this.whileOn(this.mind.wave(situation))
+    if (this.ended || !plan) return
+    this.plan = plan
+    await this.say(plan.line)
   }
 
   watch () {
@@ -134,14 +156,14 @@ class EvilRaid {
   // With the director on, it keeps the mobs: the model can still speak, but the script moves nothing
   async react (event) {
     if (!this.mind.canAsk) return
-    const move = await this.mind.adapt(event, await this.situation(event))
+    const move = await this.whileOn(this.mind.adapt(event, await this.situation(event)))
     if (!move || this.ended) return
     await this.say(move.line)
     if (!this.host.directed) await this.sendAll(plans.moveCommands(this.host.stage, this.plan, move.action))
   }
 
   // Anything odd while looking around means no situation, and so no model call: the invasion carries on regardless
-  async situation (event) {
+  async situation (event, hunt) {
     try {
       const P = this.host.s.player
       const player = plans.parsePos(await this.host.send(`data get entity ${P} Pos`))
@@ -158,7 +180,8 @@ class EvilRaid {
         agentHealth: bot?.health ?? null,
         creeper: this.blown ? 0 : 1,
         zombiesOut: this.zombiesOut,
-        zombies: this.zombies ?? 3
+        zombies: this.zombies ?? 3,
+        hunt
       })
     } catch {
       return null

@@ -61,7 +61,7 @@ async function gatherKind (bot, kind, want, token, deps = {}) {
     if (carried(bot, kind) < target) result = 'none'
   } else {
     // want and inBag: the job is over when the bag holds the amount, and a drop that is truly lost costs one more ore
-    const job = { block: kind, blocks: k.ores, count: want, mined: 0, want, inBag: () => carried(bot, kind) - start, strategy: deps.miner === 'tunnel' ? 'tunnel' : 'branch', home: null, store: false, ...(deps.tuning ? { tuning: deps.tuning } : {}) }
+    const job = { block: kind, blocks: k.ores, count: want, mined: 0, want, inBag: () => carried(bot, kind) - start, strategy: deps.miner === 'tunnel' ? 'tunnel' : 'branch', home: null, store: false, ...(deps.tuning ? { tuning: deps.tuning } : {}), ...(deps.takeEasy ? { takeEasy: deps.takeEasy } : {}) }
     // lowFood, restock and restocking: the food turn-back of a trip underground (mine_branch.js)
     const r = await mineJob(bot, job, deps.human, token, { say, log, onMined: deps.onMined, lowFood: deps.lowFood, restock: deps.restock, restocking: deps.restocking })
     result = r.result === 'done' ? 'done' : r.result

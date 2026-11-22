@@ -19,7 +19,7 @@ const { walkHome, walkToSpot } = require('../walk_home')
 const CONFIG = { host: '127.0.0.1', port: 25566, version: '1.21.11', owner: null, bots: ['Agent1'], fighter_run: 'weights/fighter' }
 const STAGE = { x: 10, y: -60, z: 20 }
 const S = { ...loadSettings({ DEMO_PLAYER: 'Viewer' }, CONFIG), stage: STAGE }
-const KIT = [['diamond_axe', 1], ['shield', 1], ['bread', 6]]
+const KIT = [['stone_axe', 1], ['shield', 1], ['bread', 6]]
 const PICK = 'clear Viewer minecraft:diamond_pickaxe 0'
 const found = n => (n ? `Found ${n} matching item(s) on player Viewer` : 'No items were found on player Viewer')
 const tpTo = (name, p, yaw) => `tp ${name} ${p.x + 0.5} ${p.y} ${p.z + 0.5} ${yaw} 0`
@@ -279,11 +279,12 @@ test('!evil uses the base he is in, keeps a stocked chest, and closes the gap fi
   assert.ok(!rcon.has('red_bed'), 'no second base')
   assert.ok(!rcon.has(' chest['))
   assert.ok(!rcon.sent.some(s => s.includes(' air') && s.startsWith('fill')), 'nothing in the base is cleared')
-  const seal = scene.sealCommands(STAGE)[0]
-  assert.ok(seal.endsWith('cobblestone'))
+  const seal = scene.sealCommands(STAGE).find(c => c.includes('iron_door['))
+  assert.ok(seal.includes('iron_door['), 'the door is shut, not walled over')
   const creeper = rcon.sent.findIndex(s => s.startsWith('summon minecraft:creeper'))
   assert.ok(rcon.sent.indexOf(seal) >= 0 && rcon.sent.indexOf(seal) < creeper)
   assert.ok(rcon.sent.includes(tpTo('Viewer', scene.spots(STAGE).player, -90)))
+  await c.handle('!stop', 'Viewer')
   rcon.sent.length = 0
   await c.handle('!evil', 'Viewer')
   assert.ok(rcon.has('red_bed'), 'a base already blown up is put back')
@@ -306,11 +307,11 @@ test('!1v1 returns him to the base', async () => {
 test('the help names the new commands', () => {
   const text = HELP_LINES.join('\n')
   assert.match(text, /!chest/)
-  assert.match(text, /!follow/)
-  assert.match(text, /!unfollow/)
+  assert.match(text, /!pov/)
+  assert.match(text, /!spec/)
   assert.ok(!/dummy/i.test(text))
-  assert.deepEqual(parseDemoCommand('!follow'), { name: 'follow' })
-  assert.deepEqual(parseDemoCommand('!unfollow'), { name: 'unfollow' })
+  assert.deepEqual(parseDemoCommand('!pov'), { name: 'follow' })
+  assert.deepEqual(parseDemoCommand('!spec'), { name: 'unfollow' })
 })
 
 test('his body stays at his spot facing the agent during a task, and is gone when he is back', async () => {

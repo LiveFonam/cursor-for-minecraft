@@ -26,7 +26,7 @@ const { Vec3 } = require('vec3')
 const { isEnemy, dist } = require('./targets')
 const { foodPointsCarried, foodSupply, supplyText, HUNGRY } = require('./skills/food')
 const { FOOD_EMERGENCY, FOOD_RECOVERED } = require('./skills/food_plan')
-const { sealedOff } = require('./hazards')
+const { sealedOff, wallsBetween } = require('./hazards')
 
 const SENSE_RADIUS = 24       // blocks, mobs further out are not a danger yet (except long range shooters)
 const SCAN_RADIUS = 64        // what it looks at at all (a ghast shoots from 50)
@@ -43,6 +43,8 @@ const BOSS_RADIUS = 32        // a warden or a wither this close: leave
 const SEAL_KEEP_MS = 1000     // how long the answer on a walled off mob is kept
 const SEAL_RADIUS = 16        // a mob further off than this is not checked for a wall
 const SEAL_SEARCHES = 8       // how many mobs one look may check
+const BLAST_REACH = 5         // a creeper this close can hurt the bot through a thin wall
+const BLAST_WALL = 2          // the most solid blocks a blast gets through
 const CREEPER_AVOID = 6       // a creeper this close: back off
 const CREEPER_SAFE = 9        // until it is this far
 const CREEPER_PATIENCE_MS = 15000  // backing off from the same creeper this long: fight it instead
@@ -226,6 +228,18 @@ function onFire (bot) {
 
 const angryEnderman = e => e.name === 'enderman' && e.metadata?.[ENDERMAN_ANGRY] === true
 
+// A melee hit needs a clear eye line. A mob with neither that nor open air between its body and the bot's did not land
+// this one (a fall or hunger did). A creeper's blast does go through a wall, so it can always be blamed
+function behindWall (bot, x, eye) {
+  if (x.spec.kind === 'exploder' || clearLine(bot, eye, headOf(x.e))) return false
+  const p = x.e.position
+  const me = bot.entity.position
+  const clamp = (lo, hi, v) => Math.max(lo, Math.min(hi, v))
+  const a = { x: clamp(p.x - 0.3, p.x + 0.3, me.x), y: clamp(p.y, p.y + (x.e.height ?? 1.95), me.y + 0.9), z: clamp(p.z - 0.3, p.z + 0.3, me.z) }
+  const b = { x: clamp(me.x - 0.3, me.x + 0.3, a.x), y: clamp(me.y, me.y + 1.8, a.y), z: clamp(me.z - 0.3, me.z + 0.3, a.z) }
+  return wallsBetween(bot, a, b, 1) > 0
+}
+
 class DangerAssessor {
   // reserve: the food points to carry right now, a number or a function (a long job raises it, food_plan.js).
   // Never below FOOD_RESERVE. netFights(entity): whether the trained mob network would take this mob right now
@@ -253,6 +267,7 @@ class DangerAssessor {
     this.unreachable = new Map()  // id to until when it is out of reach
     this.creeperFight = new Map() // id to until when a creeper is fought instead of avoided
     this.sealCache = new Map()    // id to the last answer on whether it has an open way to the bot
+    this.sealEpoch = this.sealEpoch || 0  // goes up when a block near the bot opens or closes
     this.lastHealth = this.bot.health
     this.hurtAt = 0
     this.focusId = null
@@ -290,7 +305,7 @@ class DangerAssessor {
     }
     if (hurt) {
       this.hurtAt = now
-      const close = enemies.filter(x => x.d <= x.spec.reach + 2).sort((a, b) => a.d - b.d)[0]
+      const close = enemies.filter(x => x.d <= x.spec.reach + 2 && !behindWall(bot, x, eye)).sort((a, b) => a.d - b.d)[0]
       const shooter = close ? null : enemies
         .filter(x => x.spec.kind === 'ranged' && x.d <= x.spec.range && clearLine(bot, eye, headOf(x.e)))
         .sort((a, b) => a.d - b.d)[0]
@@ -404,11 +419,14 @@ class DangerAssessor {
     const provoked = this.provoked.has(id)
     const neutral = spec.neutral && !provoked
     if (hitMe) reasons.push('hit me')
-    // under solid ground with no open way up and no shot: known about, but nothing to answer yet
-    const sealed = !hitMe && !(spec.kind === 'ranged' && los) && !spec.flier && this.isSealed(e, d, now)
+    // no walking route and no shot: known about, but nothing to answer yet. A creeper close behind a thin wall still counts
+    const nearOwner = dOwner != null && dOwner <= 8 && !spec.neutral && spec.kind !== 'exploder'
+    const blast = spec.kind === 'exploder' && d <= BLAST_REACH &&
+      wallsBetween(this.bot, { x: e.position.x, y: e.position.y + 0.85, z: e.position.z }, { x: me.x, y: me.y + 0.9, z: me.z }, BLAST_WALL) <= BLAST_WALL
+    const sealed = !hitMe && !blast && !(spec.kind === 'ranged' && los) && !spec.flier && this.isSealed(e, d, now) && !(nearOwner && this.ownerOpen(e, now))
     if (sealed) {
       score *= 0.1
-      reasons.push('sealed off below')
+      reasons.push('no way to reach me')
     } else if (neutral) {
       score *= 0.2
       reasons.push(e.type === 'player' ? 'a player who has not attacked' : 'neutral, not angry')
@@ -434,22 +452,58 @@ class DangerAssessor {
   }
 
   // sealedOff walks the cells around the two of them, so its answer is kept until either moves, the block being dug
-  // changes, or SEAL_KEEP_MS passes (a wall can be opened by someone else)
+  // changes, a nearby block opens or closes, or SEAL_KEEP_MS passes
   isSealed (e, d, now) {
     const bot = this.bot
-    if (d > SEAL_RADIUS || e.position.y > bot.entity.position.y - 2) return false
+    if (d > SEAL_RADIUS) return false
+    this.watchBlocks()
     const at = p => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
     const dig = bot.targetDigBlock?.position
-    const key = `${at(bot.entity.position)}|${at(e.position)}|${dig ? at(dig) : ''}`
+    const key = `${at(bot.entity.position)}|${at(e.position)}|${dig ? at(dig) : ''}|${this.sealEpoch}`
     const kept = this.sealCache.get(e.id)
     if (kept && kept.key === key && now - kept.at < SEAL_KEEP_MS) return kept.sealed
-    // a few searches a look at most, the rest keep their last answer until their turn: a crowd must not stall the tick
-    if (this.sealLook !== now) { this.sealLook = now; this.sealSearches = 0 }
-    if (this.sealSearches >= SEAL_SEARCHES) return kept?.sealed ?? false
+    // a few searches a look at most, the rest keep their last answer until their turn: a crowd must not stall the tick.
+    // An answer from before a block changed is not kept: that mob counts until its search runs
+    if (this.sealLook !== now || this.sealMemoEpoch !== this.sealEpoch) {
+      this.sealLook = now
+      this.sealSearches = 0
+      this.sealMemo = new Map()
+      this.sealMemoEpoch = this.sealEpoch
+    }
+    if (this.sealSearches >= SEAL_SEARCHES) return kept?.epoch === this.sealEpoch ? kept.sealed : false
     this.sealSearches++
-    const sealed = sealedOff(bot, e)
-    this.sealCache.set(e.id, { key, at: now, sealed })
+    const sealed = sealedOff(bot, e, dig ? new Map() : this.sealMemo)
+    this.sealCache.set(e.id, { key, at: now, sealed, epoch: this.sealEpoch })
     return sealed
+  }
+
+  // Walled off from the bot but going for the owner beside it: that mob still counts. Unsure counts as open
+  ownerOpen (e, now) {
+    const o = this.bot.players?.[this.owner]?.entity?.position
+    if (!o) return false
+    const at = p => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
+    const key = `${at(o)}|${at(e.position)}|${this.sealEpoch}`
+    const kept = this.sealCache.get(`owner${e.id}`)
+    if (kept && kept.key === key && now - kept.at < SEAL_KEEP_MS) return kept.open
+    if (this.sealSearches >= SEAL_SEARCHES) return true
+    this.sealSearches++
+    const open = !sealedOff(this.bot, e, this.bot.targetDigBlock ? new Map() : this.sealMemo, o)
+    this.sealCache.set(`owner${e.id}`, { key, at: now, open })
+    return open
+  }
+
+  // A wall that opens near the bot ends every kept answer at once
+  watchBlocks () {
+    const bot = this.bot
+    if (this.watchingBlocks || !bot.on) return
+    this.watchingBlocks = true
+    this.sealEpoch = this.sealEpoch || 0
+    bot.on('blockUpdate', (was, now) => {
+      const p = now?.position || was?.position
+      const me = bot.entity?.position
+      if (!p || !me || (was?.boundingBox === now?.boundingBox && was?.name === now?.name)) return
+      if (Math.abs(p.x - me.x) <= SEAL_RADIUS + 8 && Math.abs(p.y - me.y) <= SEAL_RADIUS && Math.abs(p.z - me.z) <= SEAL_RADIUS + 8) this.sealEpoch++
+    })
   }
 
   // The bot's own body and bag
@@ -460,7 +514,7 @@ class DangerAssessor {
     if (bot.entity.isInLava) self('lava', 8, 'escape', 'standing in lava')
     else if (onFire(bot)) self('fire', 5, 'escape', 'on fire')
     const head = bot.blockAt(new Vec3(Math.floor(bot.entity.position.x), Math.floor(bot.entity.position.y + 1.62), Math.floor(bot.entity.position.z)))
-    if (head && head.boundingBox === 'block') self('suffocation', 6, 'escape', `head inside ${head.name}`)
+    if (smothers(head)) self('suffocation', 6, 'escape', `head inside ${head.name}`)
     if (bot.entity.isInWater && bot.oxygenLevel !== undefined && bot.oxygenLevel < 10) {
       self('drowning', 4 + (10 - bot.oxygenLevel) / 2, 'swim', `air ${bot.oxygenLevel} of 20`)
     }
@@ -651,7 +705,14 @@ function emptyReport () {
   return { at: 0, dangers: [], total: 0, top: null, escape: null, swim: null, flee: null, avoid: null, fight: null, eat: null, resupply: null, foodEmergency: null, vulnerability: 1, safe: false }
 }
 
+// A door, gate, fence or pane is solid to walk into, but a head standing in its frame is not being smothered
+const OPEN_FRAME = /(_door|_trapdoor|_fence|_fence_gate|_wall|_pane|iron_bars|chain|lantern)$/
+function smothers (block) {
+  return !!block && block.boundingBox === 'block' && !OPEN_FRAME.test(block.name || '')
+}
+
 module.exports = {
+  smothers,
   DangerAssessor,
   isDanger,
   MOBS,

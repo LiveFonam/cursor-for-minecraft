@@ -287,3 +287,130 @@ test('a flying mob is not sealed by the ground rule', () => {
   const p = mob(bot, 1, 'phantom', 0.5, 54, 0.5)
   assert.equal(sealedOff(bot, p), false)
 })
+
+// A staircase cut into solid ground beside a cave, with one wall of stone between them
+function staircase (world) {
+  for (let i = 0; i < 6; i++) world.fill3(new Vec3(i, 58 - i, 0), new Vec3(i, 60 - i, 0), 'air')
+  world.fill3(new Vec3(0, 50, 2), new Vec3(8, 56, 6), 'air')
+}
+const inStairs = (bot, x = 3, y = 55) => { bot.entity.position = new Vec3(x + 0.5, y, 0.5); bot.entity.onGround = true }
+
+test('a zombie on the other side of a staircase wall is ignored', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  bot.health = 5
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 3.5, 55, 2.5)
+  assert.equal(sealedOff(bot, z), true)
+  a.update()
+  const seen = a.report.dangers.find(x => x.entity === z)
+  assert.equal(seen.sealed, true)
+  assert.equal(seen.active, false)
+  assert.equal(a.report.fight, null)
+  assert.equal(a.report.flee, null)
+  assert.equal(a.report.avoid, null)
+})
+
+test('a sealed zombie above or at the same height is ignored too', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  world.fill3(new Vec3(1, 59, 2), new Vec3(5, 61, 4), 'air')
+  inStairs(bot)
+  assert.equal(sealedOff(bot, mob(bot, 1, 'zombie', 3.5, 59, 3.5)), true, 'above')
+  assert.equal(sealedOff(bot, mob(bot, 2, 'zombie', 5.5, 55, 3.5)), true, 'beside')
+})
+
+test('a zombie with an open route through the tunnel behind the bot is not ignored', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 0.5, 58, 0.5)
+  assert.equal(sealedOff(bot, z), false)
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === z).sealed, false)
+})
+
+test('opening the wall makes the zombie count at once, inside the cached answer', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 3.5, 55, 2.5)
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === z).sealed, true)
+  const wall = new Vec3(3, 55, 1)
+  const was = bot.blockAt(wall)
+  world.fill3(wall, wall.offset(0, 1, 0), 'air')
+  bot.emit('blockUpdate', was, bot.blockAt(wall))
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === z).sealed, false)
+})
+
+test('a search too big to finish leaves the mob counted', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  world.fill3(new Vec3(-22, 40, -22), new Vec3(22, 62, 22), 'air')
+  world.fill3(new Vec3(13, 43, 13), new Vec3(16, 48, 16), 'stone')
+  world.fill3(new Vec3(14, 45, 14), new Vec3(14, 46, 14), 'air')
+  bot.entity.position = new Vec3(0.5, 45, 0.5)
+  const z = mob(bot, 1, 'zombie', 14.5, 45, 14.5)
+  assert.equal(sealedOff(bot, z), false)
+})
+
+test('a creeper close behind a thin wall still counts, a skeleton with a clear shot too', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  const { a } = assessor(bot)
+  const c = mob(bot, 1, 'creeper', 3.5, 55, 2.5)
+  assert.equal(sealedOff(bot, c), true, 'no walking route')
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === c).sealed, false, 'a blast gets through one block')
+  delete bot.entities[1]
+  world.set(new Vec3(3, 56, 1), 'iron_bars')
+  const s = mob(bot, 2, 'skeleton', 3.5, 55, 2.5)
+  world.set(new Vec3(3, 56, 1), 'air')
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === s).sealed, false, 'it can see the bot')
+})
+
+test('fall damage beside a walled off zombie is not blamed on it', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 3.5, 55, 2.5)
+  a.update()
+  bot.health -= 3
+  a.update()
+  const seen = a.report.dangers.find(x => x.entity === z)
+  assert.equal(seen.hitMe, false)
+  assert.equal(seen.sealed, true)
+  assert.equal(a.report.fight, null)
+})
+
+test('a zombie walled off from the bot but with an open way to the owner still counts', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  bot.players = { Owner: { entity: { position: new Vec3(3.5, 55, 5.5) } } }
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 3.5, 55, 4.5)
+  assert.equal(sealedOff(bot, z), true)
+  a.update()
+  const seen = a.report.dangers.find(x => x.entity === z)
+  assert.equal(seen.sealed, false)
+})
+
+test('a zombie walled off from both the bot and the owner beside it is ignored', () => {
+  const { bot, world } = makeBot({ groundY: 63 })
+  staircase(world)
+  inStairs(bot)
+  bot.players = { Owner: { entity: { position: new Vec3(2.5, 56, 0.5) } } }
+  const { a } = assessor(bot)
+  const z = mob(bot, 1, 'zombie', 3.5, 55, 2.5)
+  a.update()
+  assert.equal(a.report.dangers.find(x => x.entity === z).sealed, true)
+  assert.equal(a.report.fight, null)
+})

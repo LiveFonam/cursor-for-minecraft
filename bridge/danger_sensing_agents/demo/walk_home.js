@@ -11,10 +11,15 @@ const NEAR = 2
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
 
-// 'done', 'far' or 'cancelled'
-async function walkToSpot (ctx, at, token) {
+// 'done', 'far', 'shut' (the door would not let it in) or 'cancelled'. door: the step that gets it inside first
+async function walkToSpot (ctx, at, token, door = null) {
   const { bot, agents } = ctx
   bot.pathfinder.setMovements(agents.noDigMoves(bot))
+  if (door) {
+    const through = await door(token)
+    if (through !== 'done') return through
+    bot.pathfinder.setMovements(agents.noDigMoves(bot))
+  }
   for (let leg = 0; leg < LEGS; leg++) {
     if (token.cancelled) return 'cancelled'
     if (dist(at, bot.entity.position) <= NEAR) return 'done'
@@ -49,7 +54,7 @@ class WalkHomeMode extends Mode {
     this.token = token
     // a walk a fight cancelled may still be inside its last await: the next one starts once it has settled
     const prev = this.running || Promise.resolve()
-    const run = prev.catch(() => {}).then(() => token.cancelled ? 'cancelled' : walkToSpot(this.ctx, job.at, token))
+    const run = prev.catch(() => {}).then(() => token.cancelled ? 'cancelled' : job.run ? job.run(token) : walkToSpot(this.ctx, job.at, token, job.door))
     this.running = run
     run.then(result => {
       if (this.token === token) this.token = null
@@ -69,19 +74,29 @@ class WalkHomeMode extends Mode {
   }
 
   describe () {
-    return 'walking back to the base'
+    return this.job?.run ? 'going out through the door' : 'walking back to the base'
   }
 }
 
-// Starts the walk and resolves with how it ended. The mode is added to a bot's manager once
-function walkHome (ctx, at) {
+// The mode is added to a bot's manager once
+function homeMode (ctx) {
   const m = ctx.manager
   if (!m.byName.has('demohome')) {
     const mode = new WalkHomeMode(ctx)
     m.modes.splice(m.modes.indexOf(m.get('craft')), 0, mode)
     m.byName.set('demohome', mode)
   }
-  return m.setOn('demohome', { at })
+  return m
 }
 
-module.exports = { walkHome, walkToSpot, WalkHomeMode }
+// Starts the walk and resolves with how it ended
+function walkHome (ctx, at, door = null) {
+  return homeMode(ctx).setOn('demohome', { at, door })
+}
+
+// Any other short walk of the demo's, as the same mode, so a fight can cut in here too
+function runAsWalk (ctx, run) {
+  return homeMode(ctx).setOn('demohome', { run })
+}
+
+module.exports = { walkHome, runAsWalk, walkToSpot, WalkHomeMode }

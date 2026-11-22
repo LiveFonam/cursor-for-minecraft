@@ -40,6 +40,7 @@ const { checkPlan } = require('./plan_check')
 const { planGoal, goalCommands, needsToolChain, withAxe } = require('./goal_plan')
 const { ChestMemory, chestView } = require('./chest_memory')
 const { OreMarks, answerDiamonds } = require('./skills/ore_marks')
+const { TunnelMap } = require('./skills/tunnel_map')
 const { readOwnerBag } = require('./owner_bag')
 const { addGoalStepMode } = require('./skills/goal_steps')
 const { CONTAINERS } = require('./skills/storage')
@@ -182,6 +183,7 @@ class Agents {
     // what is in the chests, kept next to the builds of the same world
     this.chests = new ChestMemory(path.join(path.dirname(opts.builds || BUILDS_FILE), 'agents-chests.json'), { log })
     this.oreMarks = new OreMarks({ say: (bot, text) => this.say(bot, text) })
+    this.tunnelMaps = new Map()  // per bot name, so a reconnect keeps what it dug
     this.worldId = 'world'
     this.designer = new Designer({ log, credentials: opts.translator ? undefined : null })
     this.blackboard = new Blackboard()
@@ -282,6 +284,8 @@ class Agents {
     const ctx = { bot, agents: this, alive: true, seq: 0, pickaxes: null, lastPos: null }
     bot.trail = []  // the cells of its own tunnel, for backing out of water
     bot._oreMarks = this.oreMarks
+    if (!this.tunnelMaps.has(bot.username)) this.tunnelMaps.set(bot.username, new TunnelMap())
+    bot._tunnelMap = this.tunnelMaps.get(bot.username)
     ctx.human = new Human(bot, this.ctxs.get(bot.username)?.human?.level || CONFIG.human || 'light')
     ctx.fight = new FightSkill(bot, this.policy, { friends: this.friends, noDigMoves: this.noDigMoves(bot), log })
     bot.agentsFight = ctx.fight
@@ -823,7 +827,7 @@ class Agents {
         return null
       case 'gather':
         this.oneShot(m, 'gather')
-        return m.setOn('gather', { kind: a.kind, count: a.count })
+        return m.setOn('gather', { kind: a.kind, count: a.count, ...(a.takeEasy ? { takeEasy: a.takeEasy } : {}) })
       case 'mine':
         this.oneShot(m, 'mine')
         return m.setOn('mine', { block: a.block, blocks: a.blocks, count: a.count })

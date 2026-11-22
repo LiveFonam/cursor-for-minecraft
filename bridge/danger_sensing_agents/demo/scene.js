@@ -67,7 +67,7 @@ function agentKitCommands (name) {
   return [
     `clear ${name}`,
     `effect clear ${name}`,
-    `item replace entity ${name} hotbar.0 with diamond_axe`,
+    `item replace entity ${name} hotbar.0 with stone_axe`,
     `item replace entity ${name} weapon.offhand with shield`,
     `item replace entity ${name} hotbar.8 with bread 6`,
     `effect give ${name} instant_health 1 3 true`,
@@ -128,19 +128,42 @@ function baseLayout (stage) {
     bed: [{ x: x - 2, y, z: z - 2 }, { x: x - 1, y, z: z - 2 }],
     chest: { x: x + 2, y, z: z - 2 },
     furnace: { x: x + 2, y, z: z + 2 },
-    opening: { from: { x: x - 1, y, z: z + BASE_HALF }, to: { x, y: y + 1, z: z + BASE_HALF } },
+    opening: { from: { x, y, z: z + BASE_HALF }, to: { x, y: y + 1, z: z + BASE_HALF } },
+    door: {
+      lower: { x, y, z: z + BASE_HALF },
+      upper: { x, y: y + 1, z: z + BASE_HALF },
+      // both on the wall block beside the door's upper half: a lever that is on powers that block, and it powers the door
+      leverWall: { x: x + 1, y: y + 1, z: z + BASE_HALF },
+      insideLever: { x: x + 1, y: y + 1, z: z + BASE_HALF - 1 },
+      outsideLever: { x: x + 1, y: y + 1, z: z + BASE_HALF + 1 },
+      inside: { x, y, z: z + BASE_HALF - 1 },   // where the agent stands to flip a lever, and lands after walking in
+      outside: { x, y, z: z + BASE_HALF + 1 }
+    },
     ...spots(stage)
   }
 }
 
-// The gap in the south wall the agent walks out of
+// The door's place in the south wall, cut after the walls go up
 function openingCommand (stage, block) {
   const { from, to } = baseLayout(stage).opening
   return `fill ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} ${block}`
 }
 
-// !evil closes the gap, so the creeper has a wall to breach
-const sealCommands = stage => [openingCommand(stage, 'cobblestone')]
+// The levers go off first, so one left on cannot hold the rebuilt door open. The door's lower half goes before its upper
+// half: an upper half alone would not last
+function doorCommands (stage) {
+  const d = baseLayout(stage).door
+  const door = (p, half) => `setblock ${at(p)} iron_door[facing=north,half=${half},hinge=left,open=false,powered=false]`
+  return [
+    `setblock ${at(d.insideLever)} lever[face=wall,facing=north,powered=false]`,
+    `setblock ${at(d.outsideLever)} lever[face=wall,facing=south,powered=false]`,
+    door(d.lower, 'lower'),
+    door(d.upper, 'upper')
+  ]
+}
+
+// !evil shuts the door, so the creeper has to breach a wall
+const sealCommands = stage => doorCommands(stage)
 
 function stockCommands (stage) {
   const c = baseLayout(stage).chest
@@ -165,6 +188,7 @@ function baseCommands (stage) {
     `fill ${x - h} ${y} ${z - h} ${x - h} ${top} ${z + h} cobblestone`,
     `fill ${x + h} ${y} ${z - h} ${x + h} ${top} ${z + h} cobblestone`,
     openingCommand(stage, 'air'),
+    ...doorCommands(stage),
     `setblock ${x - 2} ${y} ${z - 2} red_bed[facing=east,part=foot]`,
     `setblock ${x - 1} ${y} ${z - 2} red_bed[facing=east,part=head]`,
     `setblock ${x + 2} ${y} ${z - 2} chest[facing=south]`,
@@ -179,6 +203,10 @@ function summonCommand (kind, p, tags) {
   const list = tags.map(t => `"${t}"`).join(',')
   return `summon minecraft:${kind} ${p.x} ${p.y} ${p.z} {Tags:[${list}],PersistenceRequired:1b${kind === 'zombie' ? ZOMBIE_GEAR : ''}}`
 }
+
+// Haste II while the agent is on a task, so the mining moves along in the demo
+const hasteCommand = name => `effect give ${name} minecraft:haste infinite 1 true`
+const endHasteCommand = name => `effect clear ${name} minecraft:haste`
 
 // The agent back on its spot in the base, facing the player
 function agentHomeCommand (name, stage) {
@@ -283,9 +311,9 @@ const parseScore = reply => {
 }
 
 module.exports = {
-  TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands,
+  TAG_BODY, REMOVE_BODY, bodyCommand, yawToAgent, CHEST_STOCK, baseLayout, baseChunks, stockCommands, sealCommands, doorCommands,
   WORLD_RULES, GRIEF_RULES, KEEP_HOSTILE, TAG_EVIL, TAG_EVIL_CREEPER, TAG_FORCED, DEATHS, FIGHT_KIT,
   hostileToRemove, purgeCommands, spots, at, baseOf, arenaOf, agentKitCommands, resetCommands, baseCommands,
   creeperCommands, zombieCommands, igniteCommands, arenaCommands, arenaChunks, fighterKitCommands, duelSpots, openSpot, forcedCommands,
-  parseScore, summonCommand, agentHomeCommand
+  parseScore, summonCommand, agentHomeCommand, hasteCommand, endHasteCommand
 }

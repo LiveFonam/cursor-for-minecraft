@@ -361,3 +361,81 @@ test('a drop it could not dig to says why on its log line, and a later look says
   assert.match(lines[0], /left a drop behind \(no way to it\): raw_iron at .*, dig: path \w+/)
   assert.match(lines[1], /, dig: already tried/)
 })
+
+// Every iron dig that starts while an own drop has been lying out of pickup range for a while
+function watchStrays (h) {
+  const firstSeen = new Map()
+  let tick = 0
+  h.bot.on('physicsTick', () => {
+    tick++
+    for (const e of Object.values(h.bot.entities)) if (e.name === 'item' && !firstSeen.has(e.id)) firstSeen.set(e.id, tick)
+  })
+  const strays = []
+  const dig = h.bot.dig
+  h.bot.dig = (b, ...rest) => {
+    // a block opened on the way to the drop is the fetch itself, not the next ore
+    if (b.name === 'iron_ore' && !/digToDrop/.test(new Error().stack)) {
+      const late = Object.values(h.bot.entities).filter(e => e.name === 'item' && tick - firstSeen.get(e.id) > 15 && !inPickupBox(h.bot.entity.position, e.position))
+      if (late.length) strays.push(`${b.position}: ${late.length}`)
+    }
+    return dig.call(h.bot, b, ...rest)
+  }
+  return strays
+}
+
+test('a drop lying out of pickup range is collected before the next ore is dug', async () => {
+  const { h } = scene('a12')
+  await settle(h)
+  const strays = watchStrays(h)
+  const r = await h.drive(mineJob(h.bot, ironJob(5), human, { cancelled: false }, {}), 3600)
+  assert.equal(r.result, 'done', r.message)
+  assert.equal(h.bot.countOf('raw_iron'), 5)
+  assert.deepEqual(strays, [])
+})
+
+test('a danger interruption right after the dig goes back for that drop when it ends', async () => {
+  // the next ore is down the tunnel, out of reach, so nothing else would bring it back here
+  const { h, s } = scene('noFood', { extra: w => {
+    for (const o of SCENES.noFood.ores.slice(1)) w.set(v(o), 'stone')
+    w.set(v([25, 16, 33]), 'air')
+    w.set(v([25, 17, 33]), 'air')
+    w.set(v([26, 16, 33]), 'iron_ore')
+  } })
+  await settle(h)
+  const job = ironJob(2)
+  const token = { cancelled: false }
+  const dig = h.bot.dig
+  h.bot.dig = async (b, ...rest) => {
+    const r = await dig.call(h.bot, b, ...rest)
+    if (b.name === 'iron_ore') token.cancelled = true
+    return r
+  }
+  await h.drive(mineJob(h.bot, job, human, token, {}), 1200)
+  h.bot.dig = dig
+  assert.ok(job.ctx.owed?.length, 'the drop is still owed after the interruption')
+  h.bot.entity.position = v(s.tunnel[0]).offset(0.5, 0, 0.5)
+  await settle(h)
+  const r = await h.drive(mineJob(h.bot, job, human, { cancelled: false }, {}), 3600)
+  assert.equal(r.result, 'done', r.message)
+  assert.equal(h.bot.countOf('raw_iron'), 2)
+  assert.equal(Object.values(h.bot.entities).filter(e => e.name === 'item').length, 0, 'nothing left on the ground')
+})
+
+test('an owed drop of a finished job is still fetched when the bag already holds enough', async () => {
+  const { h, s } = scene('base')
+  await settle(h)
+  const job = ironJob(1)
+  job.want = 1
+  job.inBag = () => h.bot.countOf('raw_iron')
+  h.bot.give('raw_iron', 1)
+  for (const o of s.ores) if (!v(o).equals(v(s.far))) h.bot.world?.set?.(v(o), 'stone')
+  const { oweDrop, collectOwed, dropFilter } = require('../skills/mine')
+  const ctx = { owed: [], dugFor: new Set(), wantsDrop: dropFilter(h.bot, job), bagDone: () => job.inBag() >= job.want, log: () => {} }
+  const at = v(s.far).offset(0.5, 0.5, 0.5)
+  h.world?.set?.(v(s.far), 'air')
+  h.bot.entities[900] = { id: 900, name: 'item', position: v(s.stand).offset(1.5, 0, 0.5), readyAt: 0, drop: 'raw_iron', getDroppedItem: () => ({ name: 'raw_iron', count: 1 }) }
+  oweDrop(h.bot, ctx, at, new Set())
+  await h.drive(collectOwed(h.bot, ctx, { cancelled: false }), 600)
+  assert.equal(h.bot.entities[900], undefined, 'the drop was picked up')
+  assert.equal(ctx.owed.length, 0)
+})

@@ -1,12 +1,15 @@
 // Runs the demo: one state at a time (idle, run, duel or evil), every order from the one demo player.
 
-const { parseDemoCommand, HELP_LINES } = require('./words')
+const { parseDemoCommand, parseCameraWords, parseHasteWords, HELP_LINES } = require('./words')
 const scene = require('./scene')
 const { namesOf } = require('../goal_plan')
 const { EvilRaid } = require('./evil_raid')
+const { EvilHunt } = require('./evil_hunt')
 
+const ENDS_EVIL = new Set(['reset', 'chest', 'stop', 'duel'])
 const PURGE_MS = 4000
 const CAMERA_MS = 3000
+const CAMERA_TRIES = 3
 const DUEL_POLL_MS = 1000
 const DUEL_READY_MS = 90000
 const DUEL_COUNTDOWN_MS = 3000
@@ -28,6 +31,9 @@ class DemoController {
   constructor ({ settings, rcon, agents, spawnDuel, log = () => {}, sleep = defaultSleep, timers = REAL_TIMERS, hostile, brain = null }) {
     this.brain = brain
     this.raid = null
+    this.hunt = null
+    this.evilOn = false       // set the moment !evil is typed, cleared the moment anything ends it
+    this.evilGen = 0
     this.s = settings
     this.rcon = rcon
     this.agents = agents
@@ -48,6 +54,7 @@ class DemoController {
     this.baseIntact = false   // built by a reset and not yet hit by !evil
     this.baseLoaded = false
     this.following = false
+    this.hasteOn = false
     this.bodyUp = false
     this.playerBack = false
     this.handFrom = 0
@@ -102,6 +109,7 @@ class DemoController {
     if (this.purgeTimer) this.timers.clearInterval(this.purgeTimer)
     this.purgeTimer = null
     this.clearRun()
+    this.evilOn = false
     this.clearEvilTimer()
     this.removeBody()
     if (this.baseLoaded) this.send(`forceload remove ${scene.baseChunks(this.stage)}`)
@@ -136,12 +144,31 @@ class DemoController {
         this.duelRun.stopped = true
         this.duelRun.child.stop()
       }
+      if (c.name === 'evil') {
+        if (this.evilOn) {
+          await this.tell('The evil god is already hunting you. A task, !reset or !stop ends it.')
+          return true
+        }
+        this.evilOn = true
+        c.gen = ++this.evilGen
+      } else if (ENDS_EVIL.has(c.name)) await this.evilOff()
       // the camera never waits in line behind a task
-      if (c.name === 'follow' || c.name === 'unfollow') await this.dispatch(c)
+      if (c.name === 'follow' || c.name === 'unfollow' || c.name === 'haste') await this.dispatch(c)
       else await this.enqueue(() => this.dispatch(c))
       return true
     }
     if (String(text).trim().startsWith('!')) return false
+    const camera = parseCameraWords(text)
+    if (camera) {
+      await this.dispatch(camera)
+      return true
+    }
+    const speed = parseHasteWords(text)
+    if (speed) {
+      await this.dispatch(speed)
+      if (!speed.alsoTask) return true
+    }
+    await this.evilOff()
     if (this.state !== 'idle') {
       await this.tell(`Busy with the ${this.state}. Type !stop first.`)
       return true
@@ -153,13 +180,17 @@ class DemoController {
   dispatch (c) {
     switch (c.name) {
       case 'help': return this.help()
+      case 'haste': return this.haste(c.on)
       case 'reset': return this.reset()
       case 'chest': return this.reset({ stocked: true })
       case 'follow': return this.followOn()
       case 'unfollow': return this.followOff()
       case 'stop': return this.stop()
       case 'duel': return this.duel()
-      case 'evil': return this.evil()
+      case 'evil': return this.evil(c.gen).catch(async err => {
+        await this.evilOff()
+        throw err
+      })
       case 'mob':
       case 'animal': return this.force(c.kind)
     }
@@ -173,6 +204,7 @@ class DemoController {
     this.clearCamera()
     this.clearCues()
     this.following = false
+    this.flyingFree = false
     this.playerBack = false
     this.taskItem = null
   }
@@ -190,8 +222,21 @@ class DemoController {
   clearEvilTimer () {
     if (this.evilTimer) this.timers.clearTimeout(this.evilTimer)
     this.evilTimer = null
+    this.hunt?.end()
+    this.hunt = null
     this.raid?.end()
     this.raid = null
+  }
+
+  // Runs ahead of the queue, so nothing still in flight can bring a wave after this
+  async evilOff () {
+    if (!this.evilOn) return
+    this.evilOn = false
+    this.clearEvilTimer()
+    if (this.state === 'evil') this.state = 'idle'
+    await this.send('director stop')
+    await this.send(`kill @e[tag=${scene.TAG_EVIL}]`)
+    await this.tell('The evil god is gone.')
   }
 
   // Ends whatever is running. The state goes first, so the agent's job ending is not read as a finished task
@@ -216,9 +261,10 @@ class DemoController {
     this.baseLoaded = true
     for (const c of scene.resetCommands(this.s, this.stage, { stocked })) await this.sendLoaded(c)
     this.baseIntact = true
+    if (this.hasteOn) await this.send(scene.hasteCommand(this.s.agent))  // the reset clears effects
     this.agents.holdAtBase?.()
     this.agents.forgetChest?.(scene.baseLayout(this.stage).chest)
-    await this.tell(stocked ? 'Scene ready, the chest is stocked for a diamond pickaxe. Say a task, or !help.' : 'Scene ready. Say a task, or !help.')
+    await this.tell(stocked ? 'Scene ready, the chest is stocked for a diamond pickaxe. Say a task, or !help.' : 'Scene ready. The chest is empty, !chest stocks it. Say a task, or !help.')
   }
 
   async stop () {
@@ -277,19 +323,28 @@ class DemoController {
     cue(this.s.cueAnimalSeconds, 'cow')
   }
 
+  // Off unless asked for. It stays on through tasks, deaths and resets until it is switched off
+  async haste (on) {
+    this.hasteOn = on ?? !this.hasteOn
+    await this.send(this.hasteOn ? scene.hasteCommand(this.s.agent) : scene.endHasteCommand(this.s.agent))
+    await this.tell(this.hasteOn ? 'The agent has Haste. !haste to turn it off.' : 'Haste is off.')
+  }
+
   async followOn () {
     if (this.state !== 'run' || this.playerBack) {
-      await this.tell('You can follow the agent during a task.')
+      await this.tell('You can take the agent\'s view during a task.')
       return
     }
     this.following = true
+    this.flyingFree = false
     await this.follow()
-    await this.tell('Following the agent. !unfollow to fly free.')
+    await this.tell('You are seeing through the agent. !spec to fly free.')
   }
 
   async followOff () {
     const was = this.following
     this.following = false
+    this.flyingFree = true
     this.clearCamera()
     if (was && this.state === 'run') await this.send(`execute as ${this.s.player} run spectate`)
     await this.tell('You are free to fly.')
@@ -304,12 +359,22 @@ class DemoController {
 
   // A new life is a new entity, so a follower's camera is pointed at it again, and once more in case it was too early
   agentSpawned () {
-    if (this.state === 'run' && this.following) {
+    // effects end with a death, so a new life gets Haste again if it is switched on
+    if (this.hasteOn && this.agents.agentBot()?.health > 0) this.send(scene.hasteCommand(this.s.agent)).catch(() => {})
+    if (this.state === 'run' && !this.flyingFree) {
+      // a death during a task puts him straight into the new agent's view, unless he chose to fly free with !spec.
+      // Tried a few times, since a new body lands late
+      this.following = true
       this.clearCamera()
-      this.cameraTimer = this.timers.setTimeout(() => {
-        this.cameraTimer = null
-        this.follow().catch(() => {})
-      }, CAMERA_MS)
+      let left = CAMERA_TRIES
+      const again = () => {
+        this.cameraTimer = this.timers.setTimeout(() => {
+          this.cameraTimer = null
+          this.follow().catch(() => {})
+          if (--left > 0 && this.state === 'run' && this.following) again()
+        }, CAMERA_MS)
+      }
+      again()
     }
     return this.follow()
   }
@@ -375,35 +440,45 @@ class DemoController {
     await this.tell(`A ${kind} is by the agent.`)
   }
 
-  async evil () {
+  async evil (gen) {
+    const live = () => this.evilOn && this.evilGen === gen
+    if (!live()) return
     await this.quiet()
+    if (!live()) return
     this.state = 'evil'
     const P = this.s.player
     await this.sendAll(scene.GRIEF_RULES)
+    if (!live()) return
     // the base he already stands in, unless a blast has hit it since the last reset
     if (!this.baseIntact) await this.sendAll(scene.baseCommands(this.stage))
     this.baseIntact = false
     await this.sendAll(scene.sealCommands(this.stage))
+    if (!live()) return
     const home = scene.spots(this.stage).player
     await this.sendAll([`gamemode survival ${P}`, `tp ${P} ${home.x + 0.5} ${home.y} ${home.z + 0.5} -90 0`,
       `effect give ${P} instant_health 1 3 true`, `effect give ${P} saturation 1 20 true`,
       scene.agentHomeCommand(this.s.agent, this.stage)])
+    if (!live()) return
     this.agents.holdAtBase?.()
     const raid = this.raid = new EvilRaid(this, this.brain)
     await raid.open()
     if (this.raid !== raid) return
     await raid.summonCreeper()
     const directed = /^director:/i.test((await this.send('director status')).trim())
+    if (this.raid !== raid) return
     this.directed = directed
     if (directed) {
       await raid.summonZombies()
+      if (this.raid !== raid) return
       await this.send(`director start ${P}`)
       raid.watch()
     }
     this.log(directed ? 'evil: the director has the mobs' : 'evil: no director on this server, using the scripted breach')
     this.evilTimer = this.timers.setTimeout(() => this.backstop().catch(() => {}),
       directed ? BACKSTOP_DIRECTOR_MS : BACKSTOP_SCRIPT_MS)
-    await this.tell('The evil god has noticed your base. !reset when it is over.')
+    this.hunt = new EvilHunt(this, this.brain, raid)
+    await this.hunt.start()
+    if (live()) await this.tell('The evil god is hunting you. Waves keep coming until a task, !reset or !stop.')
   }
 
   // The creeper is still walking around: it goes off at the wall now

@@ -15,6 +15,9 @@ public interface Grid {
     // a gate, door or trapdoor: the way in a player closes behind them
     boolean gate(int x, int y, int z);
 
+    // water at this spot. It counts as passable: a mob wades through one block of it
+    default boolean water(int x, int y, int z) { return false; }
+
     // a block the world has loaded (outside the loaded area nothing counts)
     default boolean loaded(int x, int y, int z) { return true; }
 }

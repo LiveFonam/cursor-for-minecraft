@@ -1391,7 +1391,7 @@ class GatherMode extends JobMode {
 
   onStart () {
     const p = this.params
-    const { tasks, unknown } = p.items ? tasksFromItems(p.items) : { tasks: [{ kind: p.kind, count: p.count }], unknown: [] }
+    const { tasks, unknown } = p.items ? tasksFromItems(p.items) : { tasks: [{ kind: p.kind, count: p.count, ...(p.takeEasy ? { takeEasy: p.takeEasy } : {}) }], unknown: [] }
     this.job = { tasks: tasks.map(t => ({ ...t, start: null, got: 0 })), unknown, index: 0, for: p.for || null }
     // the food plan of its longest trip (the tasks run one after another, with a food run between when short)
     const biggest = this.job.tasks.slice().sort((a, b) => foodNeed(this.ctx.bot, b.kind, b.count).points - foodNeed(this.ctx.bot, a.kind, a.count).points)[0]
@@ -1419,6 +1419,7 @@ class GatherMode extends JobMode {
       const r = await gatherKind(bot, t.kind, left, token, {
         ...foodHooks(this.ctx),
         master: () => ownerEntity(this.ctx)?.position || null,
+        ...(t.takeEasy ? { takeEasy: t.takeEasy - (have() - t.start) } : {}),  // the cap covers the whole task, also after a fight
         ...(resumed ? { toolCtx: (t.toolCtx ??= {}) } : {}),  // kept on the task, so a fight never makes two pickaxes
         digMoves: () => agents.digMoves(bot),
         say: text => agents.event(bot, 'normal', 'gather-note', text, 30000),

@@ -17,6 +17,9 @@ const APPROACH = Object.freeze({ left: 2, center: 0, right: -2 })
 const SPLITS = Object.freeze(['breach', 'flank', 'wait_rush'])
 const MOVES = Object.freeze(['press', 'regroup', 'flank'])
 const LINE_MAX = 80
+const ALONG = Object.freeze([0, -1, 1, -2, 2, -3, 3]) // where a wave's mobs stand along a wall
+const RING = 12 // how far from a player who left the base a wave lands
+const STRAY = 32 // a mob further from him than this has lost him
 const ZOMBIES = `@e[tag=${scene.TAG_EVIL},type=minecraft:zombie]`
 const BOX = /^fill (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (cobblestone|air)$/
 const BLOCK = /^setblock (-?\d+) -?\d+ (-?\d+) ([a-z_]+)/
@@ -98,6 +101,57 @@ function igniteCommands (stage, plan) {
   ]
 }
 
+// One point on each side of the middle of a wall, at head height. Air there means the wall has a hole
+function wallProbes (L) {
+  return Object.keys(WALLS).flatMap(wall => [-2, 0, 2].map(along => {
+    const p = wallPoint(L, wall, L.half, along)
+    return { wall, x: Math.floor(p.x), y: L.y + 1, z: Math.floor(p.z) }
+  }))
+}
+
+// The closest wall a raid may breach: when that is the door's wall, the side wall nearer to him
+const nearestWall = (player, L) => {
+  const side = sideOf(player.x - L.x, player.z - L.z)
+  return side === 'south' ? (player.x >= L.x ? 'east' : 'west') : side
+}
+
+const isAway = (player, L) => !whereIs(player, null, L).inside
+
+// A spot around the player, on the side the plan names. Flanking spreads the mobs all the way around him
+function ringPoint (player, plan, i, n) {
+  const dir = WALLS[plan.wall]
+  const flank = plan.zombies === 'flank'
+  const part = n > 1 ? i / (flank ? n : n - 1) - 0.5 : 0
+  const a = Math.atan2(dir.z, dir.x) + (flank ? 2 * Math.PI : Math.PI / 2) * part
+  return { x: Math.floor(player.x + RING * Math.cos(a)) + 0.5, y: Math.floor(player.y), z: Math.floor(player.z + RING * Math.sin(a)) + 0.5 }
+}
+
+// The ground under a spot away from the base, which nothing has cleared, so a mob never lands inside a hill
+const surfaceSummon = (kind, p, tags) =>
+  `execute positioned ${p.x} ${p.y} ${p.z} positioned over motion_blocking_no_leaves run ${summon(kind, { x: '~', y: '~', z: '~' }, tags)}`
+
+// Mobs that lost him are put back near him, so a full cap of them far away can never stall the hunt
+function regatherCommand (name, player, wall) {
+  const p = ringPoint(player, { wall, zombies: 'breach' }, 0, 1)
+  return `execute at ${name} run spreadplayers ${p.x} ${p.z} 1 4 false @e[tag=${scene.TAG_EVIL},distance=${STRAY}..]`
+}
+
+// A later wave: at the walls while he is inside, around him once he has left
+function waveCommands (stage, plan, { player, away, creeper = 0, zombies = 0 }) {
+  const L = layoutOf(stage)
+  const n = creeper + zombies
+  const atWall = i => {
+    const flanker = plan.zombies === 'flank' && n > 1 && i === n - 1
+    const shift = APPROACH[plan.approach] + (flanker ? 0 : ALONG[i % ALONG.length])
+    return wallPoint(L, flanker ? OPPOSITE[plan.wall] : plan.wall, L.spawnOut, Math.max(-L.spawnOut, Math.min(L.spawnOut, shift)))
+  }
+  const place = (kind, i, tags) => away || !L ? surfaceSummon(kind, ringPoint(player, plan, i, n), tags) : summon(kind, atWall(i), tags)
+  const creepers = Array.from({ length: creeper }, (_, i) => place('creeper', i, [scene.TAG_EVIL, scene.TAG_EVIL_CREEPER]))
+  const walkers = Array.from({ length: zombies }, (_, i) => place('zombie', creeper + i, [scene.TAG_EVIL]))
+  if (zombies) walkers.push(`effect give @e[tag=${scene.TAG_EVIL}] minecraft:fire_resistance infinite 0 true`)
+  return { creeper: creepers, zombies: walkers }
+}
+
 // A change of plan once the zombies are out: all of them back to the hole, or one around to the far wall
 function moveCommands (stage, plan, action) {
   const L = layoutOf(stage)
@@ -147,13 +201,15 @@ function readObject (text, keys) {
   return typeof data.line === 'string' ? data : null
 }
 
+// The south wall holds the iron door, which stays shut through a raid
+const BREACH_WALLS = Object.freeze(Object.keys(WALLS).filter(w => w !== 'south'))
 const onMenu = (value, list) => typeof value === 'string' && list.includes(value)
 
 // The opening plan, or null for anything off the menu
 function checkPlan (text) {
   const d = readObject(text, ['wall', 'approach', 'zombies', 'line'])
   if (!d) return null
-  if (!onMenu(d.wall, Object.keys(WALLS)) || !onMenu(d.approach, Object.keys(APPROACH)) || !onMenu(d.zombies, SPLITS)) return null
+  if (!onMenu(d.wall, BREACH_WALLS) || !onMenu(d.approach, Object.keys(APPROACH)) || !onMenu(d.zombies, SPLITS)) return null
   return { wall: d.wall, approach: d.approach, zombies: d.zombies, line: cleanLine(d.line) || null }
 }
 
@@ -190,22 +246,23 @@ function whereIs (pos, health, layout) {
 }
 
 // What the model is told. Only numbers and words from this file, never a name or anything a player typed
-function situationOf ({ event, stage, plan, history, player, playerHealth, agent, agentHealth, creeper, zombiesOut, zombies }) {
+function situationOf ({ event, stage, plan, history, player, playerHealth, agent, agentHealth, creeper, zombiesOut, zombies, hunt }) {
   const L = layoutOf(stage)
   if (!L) return null
   const side = 2 * L.half + 1
   return {
     event,
-    base: { size: `${side}x${side}, cobblestone walls ${L.height} high`, walls: Object.keys(WALLS), door: L.door, inside: L.inside },
+    base: { size: `${side}x${side}, cobblestone walls ${L.height} high`, walls: BREACH_WALLS, door: L.door, inside: L.inside },
     player: whereIs(player, playerHealth, L),
     agent: whereIs(agent, agentHealth, L),
     mobs: { creeper, zombies_out: zombiesOut ? zombies : 0, zombies_waiting: zombiesOut ? 0 : 3 },
     ...(plan && !plan.scripted ? { plan: { wall: plan.wall, approach: plan.approach, zombies: plan.zombies } } : {}),
-    so_far: history.slice(-6)
+    so_far: history.slice(-6),
+    ...(hunt ? { hunt } : {})
   }
 }
 
 module.exports = {
   WALLS, APPROACH, SPLITS, MOVES, LINE_MAX, FALLBACK_PLAN, layoutOf, wallPoint, creeperCommands, zombieCommands, igniteCommands,
-  moveCommands, withMove, cleanLine, villainText, checkPlan, checkMove, parsePos, parseHealth, parseCount, situationOf
+  moveCommands, waveCommands, regatherCommand, wallProbes, nearestWall, isAway, withMove, cleanLine, villainText, checkPlan, checkMove, parsePos, parseHealth, parseCount, situationOf
 }

@@ -12,7 +12,7 @@ You need a Java Development Kit (JDK) 21 and the agents' Paper 1.21.11 server, s
 node director/scripts/build.js --test
 ```
 
-This writes `server-agents/plugins/MobDirector.jar` and runs the shelter tests. Restart the server to load it. The settings live in `server-agents/plugins/MobDirector/config.yml`, which is copied from `director/config.yml` on the first start. `MOB_DIRECTOR_SERVER` points the build and the live test at a different server folder.
+This writes `server-agents/plugins/MobDirector.jar` and runs the shelter and planner tests. Restart the server to load it. The settings live in `server-agents/plugins/MobDirector/config.yml`, which is copied from `director/config.yml` on the first start. `MOB_DIRECTOR_SERVER` points the build and the live test at a different server folder.
 
 ## Commands
 

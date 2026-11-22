@@ -31,3 +31,28 @@ test('the agent goes to its spot inside the base', () => {
   assert.ok(Math.abs(a.x - b.center.x) < b.half && Math.abs(a.z - b.center.z) < b.half)
   assert.strictEqual(scene.agentHomeCommand('Agent1', STAGE), `tp Agent1 ${a.x + 0.5} ${a.y} ${a.z + 0.5} 90 0`)
 })
+
+test('!pov and !spec are the camera commands, and the old names still work', () => {
+  const { parseDemoCommand } = require('../words')
+  assert.deepStrictEqual(parseDemoCommand('!pov'), { name: 'follow' })
+  assert.deepStrictEqual(parseDemoCommand('!spec'), { name: 'unfollow' })
+  assert.deepStrictEqual(parseDemoCommand('!follow'), { name: 'follow' })
+  assert.deepStrictEqual(parseDemoCommand('!unfollow'), { name: 'unfollow' })
+})
+
+test('plain words can move the camera', () => {
+  const { parseCameraWords: cam } = require('../words')
+  for (const line of ['lemme see your pov', 'let me see ur pov', 'show me your view', 'can i get your pov', 'what do you see', 'go first person', 'POV']) {
+    assert.deepStrictEqual(cam(line), { name: 'follow' }, line)
+  }
+  for (const line of ['back to spectator', 'go back to spec', 'stop following', 'let me fly around', 'back to my pov', 'exit your pov', 'free cam']) {
+    assert.deepStrictEqual(cam(line), { name: 'unfollow' }, line)
+  }
+})
+
+test('tasks and ordinary chat are not camera commands', () => {
+  const { parseCameraWords: cam } = require('../words')
+  for (const line of ['make me a diamond pickaxe', 'get me some wood', 'go back to base', 'come here', 'build a hut', 'get iron while i watch your pov', '!pov', '']) {
+    assert.strictEqual(cam(line), null, line)
+  }
+})

@@ -65,7 +65,7 @@ function visible (bot, names, avoid, { leaves = false, logs = false } = {}) {
   const out = []
   let checks = 0
   for (const pos of found) {
-    if (avoid(pos)) continue
+    if (avoid(pos) || bot.agentsKeepBlock?.(pos)) continue
     const b = bot.blockAt(pos)
     if (!b) continue
     if (leaves && !isNaturalLeaves(b)) continue
@@ -152,6 +152,9 @@ async function staircase (bot, item, want, token, log) {
     }
     feet = next
     walked.push(next)
+    // a staircase dug for stone is a head start for the next ore trip
+    if (step === 0) bot._tunnelMap?.add(bot, 'stair', start, { x: dx, z: dz })
+    bot._tunnelMap?.add(bot, 'stair', next, { x: dx, z: dz })
   }
   if (lastCut && enough() && !token?.cancelled) {
     await collectDrops(bot, lastCut.offset(0.5, 0.5, 0.5), token)

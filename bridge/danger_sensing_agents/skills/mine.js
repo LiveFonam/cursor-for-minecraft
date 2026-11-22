@@ -15,7 +15,7 @@ const { goals } = require('mineflayer-pathfinder')
 const { sleep } = require('./human')
 const { goTo, walkOnly, walkOnlyMoves, dropDigMoves } = require('./move')
 const { digHazard } = require('../hazards')
-const { isDiamondOre } = require('./ore_marks')
+const { isMarkedOre } = require('./ore_marks')
 const { canFlow, findKnownOre, inPickupBox, pickupSpot, preAim } = require('./motion')
 const { bestPickaxeItem } = require('./gather_kinds')
 const { GoalPickup, pickUpDrops } = require('./pickup')
@@ -35,6 +35,12 @@ const DROP_DIG_BLOCKS = 3     // the most it opens to get to one drop of its own
 const DROP_DIG_MS = 6000      // the dig and the step together, then the drop counts as out of reach
 const DROP_PLAN_MS = 40       // the path search for that, short enough not to show
 const BAG_SETTLE_TICKS = 4    // how long a picked up item can take to show in the bag
+const OWED_SEARCH = 8         // a drop that rolled this far from its block still counts as that block's drop
+const OWED_NEAR = 6           // further than this from a drop it can see, it walks over first (a drop's own walk is short)
+const OWED_SIGHT = 24         // within this the game shows every drop, so one not shown is gone. Further off it goes to look
+const OWED_BACK_MS = 15000    // the walk back after a fight
+const OWED_LIFE_MS = 280000   // the game removes a drop after five minutes
+const OWED_SETTLE_TICKS = 6   // a drop still in the air is not judged out of range yet
 // A bot does not need to see, so torches only mark a long tunnel: none on a short trip, then one per this many blocks
 const TORCH_EVERY = 32
 const torchGapFor = human => Math.max(TORCH_EVERY, human?.nextTorchGap?.() ?? TORCH_EVERY)
@@ -136,10 +142,12 @@ function dropFilter (bot, job) {
   const reg = bot.registry
   const names = new Set(job.blocks.flatMap(n => (reg.blocksByName[n]?.drops || [])
     .map(d => reg.items[typeof d === 'number' ? d : d?.drop?.id ?? d?.drop]?.name)).filter(Boolean))
-  return e => {
-    if (job.inBag && job.inBag() >= job.want) return false
+  const own = e => {
     try { return names.has(e.getDroppedItem?.()?.name) } catch { return false }
   }
+  const wants = e => !(job.inBag && job.inBag() >= job.want) && own(e)
+  wants.own = own  // the block's own drop, whatever the bag holds
+  return wants
 }
 
 // A job with a bag target (job.want, job.inBag) is judged by the bag. Every block it counted is broken and the bag is
@@ -314,6 +322,7 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
             } catch {}
           }
         }
+        if (token.cancelled) return  // interrupted is not given up: the drop stays owed
         const ms = Math.min(DROP_DIG_MS, until - Date.now())
         if (!digNext && !dug.has(drop.id) && ms > 500 && digFor?.(drop)) {
           dug.add(drop.id)
@@ -321,6 +330,10 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
             digNotes.set(drop.id, 'opened the way, still could not reach it')
             onThis = 0
             continue
+          }
+          if (token.cancelled) {
+            dug.delete(drop.id)  // it gets its real try when the danger is over
+            return
           }
         }
         giveUp(drop, 'no way to it')
@@ -339,6 +352,65 @@ async function walkOntoDrops (bot, pos, token, { digNext = false, settled = fals
 async function collectAround (bot, pos, token, flow = {}) {
   if (canFlow(bot)) return walkOntoDrops(bot, pos, token, flow)
   await pickUpDrops(bot, pos, token, { settleMs: DROP_WAIT_MS, limitMs: DROP_ALL_MS })
+}
+
+// Game ticks seen by this bot, for how long a drop has been in the air
+function dropTicks (bot) {
+  if (!bot._dropTicks) {
+    const count = { n: 0 }
+    bot._dropTicks = count
+    bot.on('physicsTick', () => { count.n++ })
+  }
+  return bot._dropTicks.n
+}
+
+// Every block a job breaks for its drop is owed until that drop was fetched or truly given up on, and stays owed through
+// a fight: ctx lives on the job, so the job goes back for it when it resumes
+function oweDrop (bot, ctx, at, known = null) {
+  const spot = { at, known, since: Date.now(), tick: dropTicks(bot) }
+  ;(ctx.owed || (ctx.owed = [])).push(spot)
+  return spot
+}
+
+function settleDrop (ctx, spot) {
+  ctx.owed = (ctx.owed || []).filter(s => s !== spot)
+}
+
+const ownDrops = (bot, ctx, spot) => Object.values(bot.entities).filter(e => e.name === 'item' && !spot.known?.has(e.id) &&
+  e.position.distanceTo(spot.at) < OWED_SEARCH && (ctx.wantsDrop?.own || ctx.wantsDrop)?.(e))
+
+// Fetches what is owed. strayOnly: just the drops that have landed out of pickup range, before the next dig of a chain
+// (one in range is handed over during that dig, so the chain keeps its flow)
+async function collectOwed (bot, ctx, token, { strayOnly = false } = {}) {
+  for (const spot of (ctx.owed || []).slice()) {
+    if (token.cancelled) return
+    const age = Date.now() - spot.since
+    if (age > OWED_LIFE_MS) {
+      ctx.log?.(`${bot.username} left a drop behind (despawned while away) at ${spot.at}`)
+      settleDrop(ctx, spot)
+      continue
+    }
+    let drops = ownDrops(bot, ctx, spot)
+    if (strayOnly && (dropTicks(bot) - spot.tick < OWED_SETTLE_TICKS || !drops.some(e => !inPickupBox(bot.entity.position, e.position)))) continue
+    const target = drops[0]?.position || spot.at
+    if (bot.entity.position.distanceTo(target) > (drops.length ? OWED_NEAR : OWED_SIGHT)) {
+      try {
+        await goTo(bot, new goals.GoalNear(target.x, target.y, target.z, 2), token, OWED_BACK_MS)
+      } catch (err) {
+        if (token.cancelled) return
+        ctx.log?.(`${bot.username} left a drop behind (no way back) at ${spot.at}: ${err.message}`)
+        settleDrop(ctx, spot)
+        continue
+      }
+      if (token.cancelled) return
+      drops = ownDrops(bot, ctx, spot)
+    }
+    const around = drops[0] && drops[0].position.distanceTo(spot.at) >= 4 ? drops[0].position : spot.at
+    const enough = ctx.bagDone ? () => ctx.bagDone() && !ownDrops(bot, ctx, spot).length : null
+    await collectAround(bot, around, token, { settled: true, digFor: ctx.wantsDrop?.own || ctx.wantsDrop, dug: ctx.dugFor, enough, log: ctx.log })
+    if (token.cancelled) return
+    settleDrop(ctx, spot)
+  }
 }
 
 async function placeTorch (bot, ctx) {
@@ -541,7 +613,9 @@ async function mineOne (bot, ctx, token) {
     if (token.cancelled) return 'cancelled'
     const known = itemIds(bot)
     await bot.dig(again, true)
-    await collectAround(bot, pos.offset(0.5, 0.5, 0.5), token, { known, digFor: ctx.wantsDrop, dug: ctx.dugFor, enough: ctx.bagDone, log: ctx.log })
+    const spot = oweDrop(bot, ctx, pos.offset(0.5, 0.5, 0.5), known)
+    await collectAround(bot, spot.at, token, { known, digFor: ctx.wantsDrop, dug: ctx.dugFor, enough: ctx.bagDone, log: ctx.log })
+    if (!token.cancelled) settleDrop(ctx, spot)
     if (human.placesTorches && ctx.sinceTorch >= ctx.torchGap) await placeTorch(bot, ctx)
     return 'mined'
   }
@@ -594,15 +668,14 @@ async function mineJob (bot, job, human, token, hooks = {}) {
   if (!job.stats) job.stats = newStats(strategy)
   const counter = digCounter(bot)
   const before = counter.n
-  // a job that does not need diamonds never breaks them, not even for a tunnel or a path (hazards.js)
-  const keepDiamonds = !job.blocks.some(n => isDiamondOre({ name: n }))
-  if (keepDiamonds) bot._keepOre = isDiamondOre
+  // a job never breaks the diamonds, gold or lapis it does not need, not even for a tunnel or a path (hazards.js)
+  bot._keepOre = block => isMarkedOre(block) && !job.blocks.includes(block.name)
   try {
     if (strategy === 'tunnel') return await tunnelMineJob(bot, job, ids, human, token, hooks)
     // required here, mine_branch.js uses this file's helpers
     return await require('./mine_branch').branchMineJob(bot, job, ids, human, token, hooks)
   } finally {
-    if (keepDiamonds) bot._keepOre = null
+    bot._keepOre = null
     job.stats.dug += counter.n - before
     job.stats.endedAt = Date.now()
   }
@@ -619,6 +692,7 @@ async function tunnelMineJob (bot, job, ids, human, token, { say, log, onMined }
   ctx.wantsDrop = dropFilter(bot, job)
   ctx.dugFor = ctx.dugFor || new Set()
   ctx.bagDone = job.inBag ? () => job.inBag() >= job.want : null
+  await collectOwed(bot, ctx, token)  // what a fight interrupted comes first
   while (!token.cancelled && (job.mined < job.count || await bagShort(bot, job, token))) {
     let r
     try {
@@ -657,6 +731,9 @@ module.exports = {
   keepToolsForTheirBlocks,
   equipFor,
   collectAround,
+  collectOwed,
+  oweDrop,
+  settleDrop,
   stepInto,
   backOut,
   digCounter,

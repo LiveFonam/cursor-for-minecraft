@@ -4,11 +4,13 @@
 //   guardDigging  makes bot.dig refuse those blocks, as an aborted dig, so every skill handles it the way it already does
 //   lavaStepCost  what a path pays to walk beside lava (allowed when there is no other way) or over it (never)
 //   lavaExit      the shortest way from inside lava to dry ground, and leaveLava swims it without the pathfinder
-//   sealedOff     whether a mob below has no open way up to the bot
+//   sealedOff     whether a mob has no walking route to the bot, from any side
+//   wallsBetween  how many solid cells a straight line crosses, for a blast through a thin wall
 
 const { Vec3 } = require('vec3')
 
 const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+const FACES = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]
 const UNDER_FEET = 4          // how far below its own floor it looks for lava
 const LAVA_EDGE_COST = 8      // a path takes up to this many extra steps to stay off the edge of a pool
 const NEVER = 100             // pathfinder drops a move at this cost
@@ -21,7 +23,7 @@ const LEAVE_MS = 6000
 const TICK_LIMIT_MS = 200     // a tick that never comes (a death) must not hang the swim
 const SEAL_MARGIN = 6         // blocks around the bot and the mob that the search for an open way covers
 const SEAL_ABOVE = 2
-const SEAL_BELOW = 2          // a mob at least this far under the bot's feet can be sealed off
+const SEAL_UNDER = 2          // and how far under the lower of the two
 const SEAL_NODES = 2500       // a search this big is not sure of anything, so the mob still counts
 
 // these get to the bot without an open way on foot
@@ -143,42 +145,96 @@ async function leaveLava (bot, token, { maxMs = LEAVE_MS } = {}) {
   return !bot.entity.isInLava
 }
 
-// Whether a mob under the bot has no open way up to it. Spreads out from the bot through every cell without a full
-// block, in a box around the two of them that stops just above the bot, so a long way round through the surface does
-// not count. The block it is breaking right now counts as open, so a floor about to give way into a cave is no seal
-function sealedOff (bot, e) {
+// A cell a mob's body cannot be in. Unloaded cells, doors, gates and thin blocks (carpet, snow, a low slab) do not count
+// as walls, so anything unsure leaves the mob able to reach the bot. The block being dug is already open
+function wallAt (bot, p, memo, diggingKey) {
+  const k = keyOf(p)
+  if (k === diggingKey) return false
+  if (memo.has(k)) return memo.get(k)
+  const b = bot.blockAt(p)
+  let wall = solid(b) && !/door|gate/.test(b.name || '')
+  if (wall && Array.isArray(b.shapes) && b.shapes.length && Math.max(...b.shapes.map(s => s[4])) < 0.6) wall = false
+  memo.set(k, wall)
+  return wall
+}
+
+// Whether a mob has no route to the bot through cells its body fits in, on any side. Spreads out from the cells where the
+// mob would touch the bot and looks for the mob's own cell. Open shafts count as a route, since a mob can fall or be
+// carried along one. It stays in a box around the two, so a long way round through the surface does not count until the
+// mob has come close. A search that runs out of nodes is not sure of anything, so the mob still counts.
+// memo: block answers shared by the searches of one look. to: whose body it is about, the bot's unless given
+function sealedOff (bot, e, memo = new Map(), to = bot.entity.position) {
   if (e.type === 'player' || NOT_SEALED.test(e.name || '')) return false
-  const me = bot.entity.position
-  if (e.position.y > me.y - SEAL_BELOW) return false
-  const start = me.floored()
-  const goal = e.position.floored()
+  const feet = to.floored()
   const digging = bot.targetDigBlock?.position
   const diggingKey = digging ? keyOf(digging) : null
-  const box = {
-    x0: Math.min(start.x, goal.x) - SEAL_MARGIN,
-    x1: Math.max(start.x, goal.x) + SEAL_MARGIN,
-    z0: Math.min(start.z, goal.z) - SEAL_MARGIN,
-    z1: Math.max(start.z, goal.z) + SEAL_MARGIN,
-    y0: goal.y - 1,
-    y1: start.y + SEAL_ABOVE
+  const wall = p => wallAt(bot, p, memo, diggingKey)
+  const tall = (e.height ?? 1.95) > 1
+  const room = p => !wall(p) && (!tall || !wall(p.offset(0, 1, 0)))
+  const at = e.position.floored()
+  const from = [at, at.offset(0, 1, 0), at.offset(0, -1, 0)].find(room)
+  if (!from) return false
+  // open air along both the feet and the head line: no search needed, which is nearly every mob on open ground
+  const me = to
+  const lineOpen = lift => {
+    const a = new Vec3(e.position.x, e.position.y + lift, e.position.z)
+    const steps = Math.max(1, Math.ceil(a.distanceTo(me.offset(0, lift, 0)) / 0.25))
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps
+      if (wall(new Vec3(a.x + (me.x - a.x) * t, a.y + (me.y + lift - a.y) * t, a.z + (me.z - a.z) * t).floored())) return false
+    }
+    return true
   }
-  const seen = new Set([keyOf(start)])
-  const queue = [start]
+  if (lineOpen(0.3) && lineOpen(1.5)) return false
+  const goal = keyOf(from)
+  const box = {
+    x0: Math.min(feet.x, from.x) - SEAL_MARGIN,
+    x1: Math.max(feet.x, from.x) + SEAL_MARGIN,
+    z0: Math.min(feet.z, from.z) - SEAL_MARGIN,
+    z1: Math.max(feet.z, from.z) + SEAL_MARGIN,
+    y0: Math.min(feet.y, from.y) - SEAL_UNDER,
+    y1: Math.max(feet.y, from.y) + SEAL_ABOVE
+  }
+  const seen = new Set()
+  const queue = []
+  const add = q => {
+    if (q.x < box.x0 || q.x > box.x1 || q.z < box.z0 || q.z > box.z1 || q.y < box.y0 || q.y > box.y1) return
+    const k = keyOf(q)
+    if (seen.has(k)) return
+    seen.add(k)
+    if (room(q)) queue.push(q)
+  }
+  // every place the mob's body would be right against the bot's, with nothing between them
+  for (const c of [feet, feet.offset(0, 1, 0)]) {
+    for (const [dx, dy, dz] of FACES.concat([[0, 0, 0]])) {
+      const n = c.offset(dx, dy, dz)
+      add(n)
+      if (tall) add(n.offset(0, -1, 0))
+    }
+  }
   for (let i = 0; i < queue.length; i++) {
     if (i >= SEAL_NODES) return false
     const p = queue[i]
-    if (p.x === goal.x && p.z === goal.z && (p.y === goal.y || p.y === goal.y + 1)) return false
-    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
-      const q = p.offset(dx, dy, dz)
-      if (q.x < box.x0 || q.x > box.x1 || q.z < box.z0 || q.z > box.z1 || q.y < box.y0 || q.y > box.y1) continue
-      const k = keyOf(q)
-      if (seen.has(k)) continue
-      seen.add(k)
-      if (k !== diggingKey && solid(bot.blockAt(q))) continue
-      queue.push(q)
-    }
+    if (keyOf(p) === goal) return false
+    for (const [dx, dy, dz] of FACES) add(p.offset(dx, dy, dz))
   }
   return true
 }
 
-module.exports = { digHazard, guardDigging, lavaStepCost, lavaExit, leaveLava, markBurned, sealedOff, LAVA_EDGE_COST }
+// Solid cells a straight line crosses, counted up to limit + 1
+function wallsBetween (bot, a, b, limit = 2) {
+  const d = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
+  const steps = Math.max(1, Math.ceil(d / 0.25))
+  const crossed = new Set()
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps
+    const p = new Vec3(Math.floor(a.x + (b.x - a.x) * t), Math.floor(a.y + (b.y - a.y) * t), Math.floor(a.z + (b.z - a.z) * t))
+    const k = keyOf(p)
+    if (crossed.has(k) || !solid(bot.blockAt(p))) continue
+    crossed.add(k)
+    if (crossed.size > limit) break
+  }
+  return crossed.size
+}
+
+module.exports = { digHazard, guardDigging, lavaStepCost, lavaExit, leaveLava, markBurned, sealedOff, wallsBetween, LAVA_EDGE_COST }
