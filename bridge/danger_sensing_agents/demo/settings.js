@@ -26,13 +26,6 @@ const SOURCE_ROOT = path.resolve(__dirname, '..', '..', '..')
 
 // Every limit of the always-on evil mode
 const EVIL_LIMITS = Object.freeze({
-  maxAlive: 8,          // evil mobs alive at once, never more
-  startZombies: 3,      // zombies in the first waves, one more every second wave
-  maxZombies: 6,        // zombies in the biggest wave
-  waveGapMs: 15000,     // the pause after a wave is cleared
-  waveMaxMs: 75000,     // a wave still alive after this is topped up to the cap
-  graceMs: 8000,        // after a respawn, before the hunt goes on
-  pollMs: 2500,         // how often the hunt looks at the world
   modelPerMinute: 4,    // model calls in any one minute
   modelPerHour: 40,     // model calls in any one hour
   modelPerRun: 150      // model calls until the demo is restarted

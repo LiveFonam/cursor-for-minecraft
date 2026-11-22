@@ -10,7 +10,9 @@ const HELP_LINES = Object.freeze([
   '!pov: during a task, see through the agent\'s eyes. !spec to go back to flying free',
   '!haste [on|off]: give the agent Haste for faster mining, or take it away',
   '!1v1: fight the trained axe fighter in the arena',
-  `!evil: the evil god hunts you in waves until a task, !reset or !stop`,
+  '!evil: night falls and the mobs nearby attack your base, until a task, !reset or !stop',
+  '!moat: dig a water moat around the base. !reset takes it away',
+  '!agent: bring the agent back during !evil (or say: spawn the agent)',
   `!mob [${MOBS.join('|')}]: send a mob at the agent`,
   `!animal [${ANIMALS.join('|')}]: put an animal by the agent`,
   '!stop: stop everything and go back to the base',
@@ -44,6 +46,8 @@ function parseDemoCommand (text) {
     }
     case '1v1': return noArgs('duel')
     case 'evil': return noArgs('evil')
+    case 'moat': return noArgs('moat')
+    case 'agent': return noArgs('agent')
     case 'stop': return noArgs('stop')
     case 'help': return noArgs('help')
     case 'mob':
@@ -70,6 +74,15 @@ function parseCameraWords (text) {
   return null
 }
 
+// Plain words asking for the agent, like "spawn the agent" or "bring the bot back". Anything longer is a task
+const BRING_AGENT = /^(please |can you |could you )*(spawn|bring|summon|call|get)( in| back)? (the |my |your )?(agent|bot)( back| here| in| over)?( please)?[.!]*$/
+
+function parseAgentWords (text) {
+  const line = String(text ?? '').trim().toLowerCase()
+  if (!line || line.startsWith('!') || TASK_THING.test(line)) return null
+  return BRING_AGENT.test(line) ? { name: 'agent' } : null
+}
+
 // Plain words about Haste, like "use haste" or "turn off haste". A line that also asks for something stays a task too
 const FASTER = /\b(mine|dig|mining|digging) (a lot |way |much )?faster\b/
 const HASTE_OFF = /\b(off|stop|no|without|remove|disable|lose|drop|don'?t|quit|end)\b/
@@ -80,4 +93,4 @@ function parseHasteWords (text) {
   return { name: 'haste', on: !HASTE_OFF.test(line), alsoTask: TASK_THING.test(line) }
 }
 
-module.exports = { parseDemoCommand, parseCameraWords, parseHasteWords, HELP_LINES, MOBS, ANIMALS }
+module.exports = { parseDemoCommand, parseCameraWords, parseAgentWords, parseHasteWords, HELP_LINES, MOBS, ANIMALS }

@@ -95,16 +95,14 @@ class EvilRaid {
     this.watch()
   }
 
-  // One model call for a later wave of the hunt. Anything but a good answer keeps the scripted side
-  async planWave (scripted, hunt) {
+  // The night attack's one model call. Anything but a good answer keeps the code's side
+  async planSiege (scripted, info) {
     this.plan = scripted
     this.blown = true
-    this.zombiesOut = true
-    this.zombies = hunt.mobs_alive
     if (!this.mind) return
-    const situation = this.mind.canAsk ? await this.situation('wave', hunt) : null
+    const situation = this.mind.canAsk ? await this.situation('siege', info) : null
     if (this.ended) return
-    const plan = await this.whileOn(this.mind.wave(situation))
+    const plan = await this.whileOn(this.mind.siege(situation, info.sides.map(s => s.side)))
     if (this.ended || !plan) return
     this.plan = plan
     await this.say(plan.line)
@@ -163,12 +161,13 @@ class EvilRaid {
   }
 
   // Anything odd while looking around means no situation, and so no model call: the invasion carries on regardless
-  async situation (event, hunt) {
+  async situation (event, siege) {
     try {
       const P = this.host.s.player
       const player = plans.parsePos(await this.host.send(`data get entity ${P} Pos`))
       const playerHealth = plans.parseHealth(await this.host.send(`data get entity ${P} Health`))
-      const bot = this.host.agents.agentBot()
+      const seen = this.host.agents.agentBot()
+      const bot = this.host.agentAway ? null : seen
       return plans.situationOf({
         event,
         stage: this.host.stage,
@@ -181,7 +180,7 @@ class EvilRaid {
         creeper: this.blown ? 0 : 1,
         zombiesOut: this.zombiesOut,
         zombies: this.zombies ?? 3,
-        hunt
+        siege
       })
     } catch {
       return null

@@ -105,14 +105,6 @@ test('the raid plan cannot aim the creeper at the wall with the door', () => {
   for (const wall of ['north', 'east', 'west']) assert.equal(checkPlan(plan(wall)).wall, wall)
 })
 
-test('a scripted wave picks the nearest wall, but never the one with the door', () => {
-  const { layoutOf, nearestWall } = require('../evil_plan')
-  const b = layoutOf(STAGE)
-  assert.equal(nearestWall({ x: b.x + 1, z: b.z + 10 }, b), 'east')
-  assert.equal(nearestWall({ x: b.x - 1, z: b.z + 10 }, b), 'west')
-  assert.equal(nearestWall({ x: b.x, z: b.z - 10 }, b), 'north')
-})
-
 test('sides: the door cell counts as inside until past the panel, a roof or a mine is outside', () => {
   assert.equal(sideOf(STAGE, mid(L.hand)), 'in')
   assert.equal(sideOf(STAGE, mid(L.door.inside)), 'in')

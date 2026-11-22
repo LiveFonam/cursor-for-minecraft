@@ -1,10 +1,11 @@
 // Runs the demo: one state at a time (idle, run, duel or evil), every order from the one demo player.
 
-const { parseDemoCommand, parseCameraWords, parseHasteWords, HELP_LINES } = require('./words')
+const { parseDemoCommand, parseCameraWords, parseAgentWords, parseHasteWords, HELP_LINES } = require('./words')
 const scene = require('./scene')
 const { namesOf } = require('../goal_plan')
 const { EvilRaid } = require('./evil_raid')
-const { EvilHunt } = require('./evil_hunt')
+const { EvilSiege } = require('./evil_siege')
+const { undoCommands } = require('./evil_moat')
 const show = require('./show')
 
 const ENDS_EVIL = new Set(['reset', 'chest', 'stop', 'duel'])
@@ -32,7 +33,9 @@ class DemoController {
     this.brain = brain
     this.rng = rng
     this.raid = null
-    this.hunt = null
+    this.siege = null
+    this.carried = []         // every block an enderman has moved, so a reset can put it back
+    this.agentAway = false    // parked out of the world's way during !evil
     this.evilOn = false       // set the moment !evil is typed, cleared the moment anything ends it
     this.evilGen = 0
     this.s = settings
@@ -157,11 +160,16 @@ class DemoController {
         c.gen = ++this.evilGen
       } else if (ENDS_EVIL.has(c.name)) await this.evilOff()
       // the camera never waits in line behind a task
-      if (c.name === 'follow' || c.name === 'unfollow' || c.name === 'haste') await this.dispatch(c)
+      if (c.name === 'follow' || c.name === 'unfollow' || c.name === 'haste' || c.name === 'agent') await this.dispatch(c)
       else await this.enqueue(() => this.dispatch(c))
       return true
     }
     if (String(text).trim().startsWith('!')) return false
+    const bring = parseAgentWords(text)
+    if (bring) {
+      await this.dispatch(bring)
+      return true
+    }
     const camera = parseCameraWords(text)
     if (camera) {
       await this.dispatch(camera)
@@ -191,6 +199,8 @@ class DemoController {
       case 'unfollow': return this.followOff()
       case 'stop': return this.stop()
       case 'duel': return this.duel()
+      case 'moat': return this.moat()
+      case 'agent': return this.agentIn()
       case 'evil': return this.evil(c.gen).catch(async err => {
         await this.evilOff()
         throw err
@@ -226,13 +236,13 @@ class DemoController {
   clearEvilTimer () {
     if (this.evilTimer) this.timers.clearTimeout(this.evilTimer)
     this.evilTimer = null
-    this.hunt?.end()
-    this.hunt = null
+    this.siege?.end()
+    this.siege = null
     this.raid?.end()
     this.raid = null
   }
 
-  // Runs ahead of the queue, so nothing still in flight can bring a wave after this
+  // Runs ahead of the queue, so nothing still in flight can bring a mob after this
   async evilOff () {
     if (!this.evilOn) return
     this.evilOn = false
@@ -240,6 +250,8 @@ class DemoController {
     if (this.state === 'evil') this.state = 'idle'
     await this.send('director stop')
     await this.send(`kill @e[tag=${scene.TAG_EVIL}]`)
+    await this.send('time set day')
+    await this.agentBack()
     await this.tell('The evil god is gone.')
   }
 
@@ -255,6 +267,7 @@ class DemoController {
       await this.send('director stop')
       await this.send(`kill @e[tag=${scene.TAG_EVIL}]`)
     }
+    await this.agentBack()
     await this.agents.stopAgent()
   }
 
@@ -263,12 +276,62 @@ class DemoController {
     await this.quiet()
     await this.send(`forceload add ${scene.baseChunks(this.stage)}`)
     this.baseLoaded = true
+    await this.send(`execute if entity @e[tag=${scene.TAG_MOAT}] run forceload add ${scene.moatChunks(this.stage)}`)
+    for (const c of undoCommands(this.carried)) await this.send(c)
+    this.carried = []
     for (const c of scene.resetCommands(this.s, this.stage, { stocked })) await this.sendLoaded(c)
     this.baseIntact = true
     if (this.hasteOn) await this.send(scene.hasteCommand(this.s.agent))  // the reset clears effects
     this.agents.holdAtBase?.()
     this.agents.forgetChest?.(scene.baseLayout(this.stage).chest)
     await this.tell(stocked ? 'Scene ready, the chest is stocked for a diamond pickaxe. Say a task, or !help.' : 'Scene ready. The chest is empty, !chest stocks it. Say a task, or !help.')
+  }
+
+  // Digs the moat. It waits for anything running, so it never lands on a task or an attack
+  async moat () {
+    if (this.state !== 'idle') {
+      await this.tell(`Busy with the ${this.state}. Type !stop first.`)
+      return
+    }
+    await this.send(`forceload add ${scene.moatChunks(this.stage)}`)
+    for (const c of scene.moatCommands(this.stage)) await this.sendLoaded(c)
+    this.carried = []
+    await this.tell('The base has a moat now. !reset takes it away.')
+  }
+
+  // Out of the fight and out of sight, high over the base, so its view of the blocks there stays live
+  async agentOut () {
+    const b = scene.baseOf(this.stage)
+    this.agentAway = true
+    await this.send(`gamemode spectator ${this.s.agent}`)
+    if (this.agentAway) await this.send(`tp ${this.s.agent} ${b.x + 0.5} ${b.y + 40} ${b.z + 0.5}`) // evil may have ended already
+  }
+
+  async agentBack () {
+    if (!this.agentAway) return
+    this.agentAway = false
+    await this.sendAll([`gamemode survival ${this.s.agent}`, scene.agentHomeCommand(this.s.agent, this.stage)])
+  }
+
+  async agentIn () {
+    if (!this.agentAway) {
+      await this.tell('The agent is already here.')
+      return
+    }
+    await this.agentBack()
+    await this.tell('The agent is here.')
+  }
+
+  // How the attack reads the world, or null when the agent's view is not there to read
+  blockReader () {
+    try {
+      const bot = this.agents.agentBot()
+      if (!bot?.blockAt) return null
+      const { Vec3 } = require('vec3')
+      return (x, y, z) => bot.blockAt(new Vec3(x, y, z))
+    } catch {
+      return null
+    }
   }
 
   async stop () {
@@ -451,7 +514,7 @@ class DemoController {
     if (!live()) return
     this.state = 'evil'
     const P = this.s.player
-    await this.sendAll(scene.GRIEF_RULES)
+    await this.sendAll([...scene.GRIEF_RULES, 'time set midnight'])
     if (!live()) return
     // the base he already stands in, unless a blast has hit it since the last reset
     if (!this.baseIntact) await this.sendAll(scene.baseCommands(this.stage))
@@ -460,11 +523,30 @@ class DemoController {
     if (!live()) return
     const home = scene.spots(this.stage).player
     await this.sendAll([`gamemode survival ${P}`, `tp ${P} ${home.x + 0.5} ${home.y} ${home.z + 0.5} -90 0`,
-      `effect give ${P} instant_health 1 3 true`, `effect give ${P} saturation 1 20 true`,
-      scene.agentHomeCommand(this.s.agent, this.stage)])
-    if (!live()) return
+      `effect give ${P} instant_health 1 3 true`, `effect give ${P} saturation 1 20 true`])
     this.agents.holdAtBase?.()
+    await this.agentOut()
+    if (!live()) return
     const raid = this.raid = new EvilRaid(this, this.brain)
+    const blockAt = this.blockReader()
+    if (blockAt) {
+      const siege = this.siege = new EvilSiege(this, this.brain, raid, blockAt)
+      if (await siege.prepare()) {
+        if (!live()) return
+        siege.done = siege.run().catch(err => this.log(`evil: ${err.message}`))
+        await this.tell('Night falls. The evil god is coming for you. A task, !reset or !stop ends it.')
+        return
+      }
+      if (!live() || this.siege !== siege) return
+      this.siege = null
+      this.log('evil: no checked way in, using the scripted breach')
+    }
+    await this.scriptedBreach(raid, live)
+  }
+
+  // One blast and one rush, for when the world cannot be read
+  async scriptedBreach (raid, live) {
+    const P = this.s.player
     await raid.open()
     if (this.raid !== raid) return
     await raid.summonCreeper()
@@ -480,9 +562,7 @@ class DemoController {
     this.log(directed ? 'evil: the director has the mobs' : 'evil: no director on this server, using the scripted breach')
     this.evilTimer = this.timers.setTimeout(() => this.backstop().catch(() => {}),
       directed ? BACKSTOP_DIRECTOR_MS : BACKSTOP_SCRIPT_MS)
-    this.hunt = new EvilHunt(this, this.brain, raid)
-    await this.hunt.start()
-    if (live()) await this.tell('The evil god is hunting you. Waves keep coming until a task, !reset or !stop.')
+    if (live()) await this.tell('Night falls. The evil god is coming for you. A task, !reset or !stop ends it.')
   }
 
   // The creeper is still walking around: it goes off at the wall now
